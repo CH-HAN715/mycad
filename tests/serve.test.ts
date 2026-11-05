@@ -111,6 +111,14 @@ describe('mycad serve', () => {
     assert.ok(text.includes('EOF'));
   });
 
+  it('GET /vendor/three.module.js 本地提供渲染库（无 CDN）', async () => {
+    const r = await fetch(`${base}/vendor/three.module.js`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type') ?? '', /javascript/);
+    const text = await r.text();
+    assert.ok(text.length > 100_000, '应为完整 three.js 模块');
+  });
+
   it('错误口径：未知字段被拒绝、未知路由 404', async () => {
     const bad = await post('section', { profileSpec: { width: 20, height: 20, typo: 1 } });
     assert.equal(bad.json.ok, false);

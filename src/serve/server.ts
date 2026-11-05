@@ -8,6 +8,7 @@
  */
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { GeometryInputError } from '../geom/polygon.ts';
 import { buildProfile, parseProfileSpec } from '../geom/profile.ts';
 import { PROFILE_PRESETS, findProfilePreset } from '../geom/presets.ts';
@@ -201,6 +202,11 @@ export function startServe(options: { port: number; host?: string }): Promise<Se
         }
         if (req.method === 'GET' && path === '/api/presets') {
           sendJson(res, 200, { ok: true, presets: PROFILE_PRESETS });
+          return;
+        }
+        if (req.method === 'GET' && path === '/vendor/three.module.js') {
+          const file = readFileSync(new URL('./vendor/three.module.js', import.meta.url), 'utf8');
+          sendText(res, 200, file, 'text/javascript; charset=utf-8');
           return;
         }
         if (req.method === 'POST' && path.startsWith('/api/')) {
