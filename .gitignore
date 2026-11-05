@@ -1,0 +1,33 @@
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 密钥与本地配置（禁止提交）
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+credentials.json
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+.cache/
+dist/
+build/
+
+# 依赖
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/

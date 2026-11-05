@@ -1,0 +1,34 @@
+{
+  "name": "mycad",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "description": "工业级铝型材框架设计引擎 · agent-first CLI",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "mycad": "./src/cli/main.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./geom": "./src/geom/index.ts",
+    "./frame": "./src/frame/index.ts",
+    "./production": "./src/production/index.ts",
+    "./io": "./src/io/index.ts",
+    "./report": "./src/report/sectionReport.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts tests/**/*.test.ts",
+    "cli": "node --disable-warning=ExperimentalWarning src/cli/main.ts",
+    "bench": "node --disable-warning=ExperimentalWarning src/cli/main.ts bench",
+    "verify": "pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^7.0.2"
+  }
+}
