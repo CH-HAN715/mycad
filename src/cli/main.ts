@@ -9,6 +9,8 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { spawn } from 'node:child_process';
+import { startServe } from '../serve/server.ts';
 import type { SectionProperties } from '../geom/inertia.ts';
 import { SECTION_PROVENANCE, sectionProperties, sig } from '../geom/inertia.ts';
 import { GeometryInputError, v2 } from '../geom/polygon.ts';
@@ -106,6 +108,9 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
       输出截面 DXF（AC1009，LINE/CIRCLE 实体，单位 mm）。
       几何 JSON 可带 "circles":[{"center":[x,y],"diameter":6.5}] 输出圆孔（端面孔位图）。
       不给 --out 则打印到 stdout。
+
+  mycad serve [--port <n>] [--open]
+      启动本地网页设计台（只监听 127.0.0.1，默认端口 8617）。--open 自动打开浏览器。
 
   mycad help | version
       --help / -h       显示本帮助
@@ -443,6 +448,51 @@ function resolveSectionInput(flags: Flags): SectionInput {
   }
 
   return { source: title, outer, holes, circles, profileSpec, profileMeta, profilePreset };
+}
+
+/** mycad serve [--port <n>] [--open]：本地网页壳。默认端口 8617 是项目固定约定值并在启动时显示。 */
+function cmdServe(args: readonly string[]): number {
+  let port = 8617;
+  let open = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === '--port') {
+      const { value, next } = readNumericFlag(args, i, '--port');
+      if (!Number.isInteger(value) || value < 1 || value > 65535) fail('E_USAGE', `端口非法：${value}`, '端口取 1..65535 的整数');
+      port = value;
+      i = next;
+      continue;
+    }
+    if (arg === '--open') {
+      open = true;
+      continue;
+    }
+    fail('E_USAGE', `未知参数：${arg}`, '用法：mycad serve [--port <n>] [--open]');
+  }
+  const url = `http://127.0.0.1:${port}/`;
+  startServe({ port }).then(
+    (handle) => {
+      console.log(`mycad serve 已启动：${url}`);
+      console.log('只监听 127.0.0.1；Ctrl+C 退出。默认端口 8617 是项目固定约定（非系统惯例）。');
+      if (open) {
+        try {
+          spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
+        } catch {
+          console.log('自动打开浏览器失败，请手动访问上面的地址。');
+        }
+      }
+      process.on('SIGINT', () => {
+        void handle.close().then(() => process.exit(0));
+      });
+    },
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`启动失败：${message}`);
+      console.error('提示：端口可能已被占用，换一个：mycad serve --port 8700');
+      process.exitCode = EXIT.badInput;
+    },
+  );
+  return EXIT.ok;
 }
 
 function cmdPresets(args: readonly string[]): number {
@@ -1055,6 +1105,8 @@ function run(argv: readonly string[]): number {
       return cmdSection(rest);
     case 'presets':
       return cmdPresets(rest);
+    case 'serve':
+      return cmdServe(rest);
     case 'bench':
       return cmdBench(rest);
     case 'report':
@@ -1080,7 +1132,7 @@ function run(argv: readonly string[]): number {
       console.log(`mycad ${readVersion()}`);
       return EXIT.ok;
     default:
-      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、bench、help、version');
+      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、serve、bench、help、version');
   }
 }
 
