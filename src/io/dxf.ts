@@ -1,27 +1,34 @@
 import type { Vec2 } from '../geom/polygon.ts';
 
 /**
- * L7 输出层：截面 DXF（AC1009 / R12，LINE 实体）。
+ * L7 输出层：截面 DXF（AC1009 / R12，LINE + CIRCLE 实体）。
  *
- * 只输出外轮廓与孔洞的闭合线段，以及毫米单位声明。
- * 不含尺寸标注、公差、孔位表与加工特征——这些必须由后续图层补齐，
+ * 输出外轮廓与孔洞的闭合线段、可选的圆孔（圆心+直径），以及毫米单位声明。
+ * 不含尺寸标注、公差、孔位表的深度/螺纹与加工特征——这些必须由后续图层补齐，
  * 本文件不能直接充当可加工图纸。
  */
 
 export const DXF_PROVENANCE = {
   format: 'AC1009 (R12)',
-  entities: ['LINE'],
+  entities: ['LINE', 'CIRCLE'],
   units: 'mm',
   limitations: [
-    '只有轮廓线段，没有尺寸标注、公差与加工特征',
-    '孔洞按闭合多段线输出，不标注孔径与位置公差',
+    '只有轮廓线段与圆孔，没有尺寸标注、公差与加工工艺',
+    '孔洞按闭合多段线输出，圆孔只含圆心与直径，不含深度、螺纹与孔位公差',
     '不输出图层以外的元数据，也不含材料与表面处理',
   ],
   disclaimer: 'DXF 仅为几何轮廓交换文件，不是可加工图纸；下厂前必须补齐尺寸、公差与工艺要求。',
 } as const;
 
+/** 圆孔：圆心与直径，用于端面孔位图。 */
+export interface CircleSpec {
+  readonly center: Vec2;
+  readonly diameterMm: number;
+}
+
 export interface DxfOptions {
   readonly layer?: string;
+  readonly circles?: readonly CircleSpec[];
 }
 
 const formatNumber = (value: number): string => {
@@ -60,6 +67,23 @@ function contourEntities(contour: readonly Vec2[], layer: string): string[] {
   return entities;
 }
 
+function circleEntity(center: Vec2, diameterMm: number, layer: string): string {
+  return [
+    '0',
+    'CIRCLE',
+    '8',
+    layer,
+    '10',
+    formatNumber(center.x),
+    '20',
+    formatNumber(center.y),
+    '30',
+    '0',
+    '40',
+    formatNumber(diameterMm / 2),
+  ].join('\n');
+}
+
 export function sectionToDxf(
   outer: readonly Vec2[],
   holes: readonly (readonly Vec2[])[] = [],
@@ -73,13 +97,26 @@ export function sectionToDxf(
       }
     }
   }
+  const circles = options.circles ?? [];
+  for (const circle of circles) {
+    if (!Number.isFinite(circle.center.x) || !Number.isFinite(circle.center.y)) {
+      throw new RangeError('DXF 圆心坐标必须是有限数');
+    }
+    if (!Number.isFinite(circle.diameterMm) || circle.diameterMm <= 0) {
+      throw new RangeError(`DXF 圆孔直径必须为正数，收到 ${circle.diameterMm}`);
+    }
+  }
 
   const layer = options.layer ?? 'MYCAD';
   if (!/^[A-Za-z0-9_\-]+$/.test(layer)) {
     throw new RangeError(`图层名只允许字母、数字、下划线与连字符：${layer}`);
   }
 
-  const entities = [...contourEntities(outer, layer), ...holes.flatMap((hole) => contourEntities(hole, layer))];
+  const entities = [
+    ...contourEntities(outer, layer),
+    ...holes.flatMap((hole) => contourEntities(hole, layer)),
+    ...circles.map((circle) => circleEntity(circle.center, circle.diameterMm, layer)),
+  ];
 
   return [
     '0',

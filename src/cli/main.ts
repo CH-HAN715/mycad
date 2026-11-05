@@ -25,6 +25,11 @@ import type { Bom } from '../production/bom.ts';
 import { BOM_PROVENANCE, buildBom } from '../production/bom.ts';
 import type { CutOptions, CutPieceInput, CutPlan } from '../production/cutPlan.ts';
 import { CUT_PROVENANCE, CutInputError, planCuts } from '../production/cutPlan.ts';
+import type { ConnectPlan } from '../connect/plan.ts';
+import { CONNECT_PROVENANCE, ConnectError, parseConnectInput, planConnections } from '../connect/plan.ts';
+import type { CheckResult } from '../check/beam.ts';
+import { CHECK_PROVENANCE, CheckError, parseCheckInput, runCheck } from '../check/beam.ts';
+import type { CircleSpec } from '../io/dxf.ts';
 import { VERIFY_CASES, compareToExpectation, symmetryProblems } from '../verify/fixtures.ts';
 
 const EXIT = { ok: 0, verifyFailed: 1, badInput: 2 } as const;
@@ -47,7 +52,7 @@ function fail(code: string, message: string, hint: string, exitCode: number = EX
   throw new CliError(code, message, hint, exitCode);
 }
 
-const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截面 DSL、L2 截面特性、L4 框架、L5 BOM/下料）
+const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截面 DSL、L2 截面特性、L3 连接规则、L4 框架、L5 BOM/下料、L6 标准工况校核、L7 截面 DXF）
 
 用法：
   mycad section [--json] [--file <path> | --preset <id> | --profile <path|->]
@@ -71,6 +76,19 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
   mycad frame [--json] [--file <path|->]
       求解轴对齐框架：杆件长度、下料长度、关节聚类与共线干涉检查。
 
+  mycad connect [--json] [--file <path|->]
+      L3 连接规则引擎：关节分类、连接件选型、孔位表与让量建议。
+      输入为框架 JSON，或 {"frame":{...},"options":{"rules":{...}}} 覆盖默认规则。
+      默认规则是工程惯例（非规范条文），输出中会显示来源。
+
+  mycad check [--json] [--file <path|->]
+      L6 标准工况校核：简支/悬臂挠度与应力、压杆欧拉临界力。
+      输入形如 {"case":"ss_udl","lengthMm":600,"eMpa":69000,"eSource":"…",
+      "profile":{截面 DSL},"bendingAxis":"x","qNPerMm":5,
+      "allowableMpa":80,"allowableSource":"…","deflectionRatioLimit":250,
+      "deflectionSource":"工程惯例，非规范条文"}
+      也可用 "section":{...} 直接给 A/I/W。校核不通过时退出码 1。
+
   mycad bom [--json] [--file <path|->] [--stock <mm> --kerf <mm>]
       输出型材与下料清单；给出棒料与锯缝时附带一维下料方案。
 
@@ -78,7 +96,9 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
       一维定尺下料。输入形如 [{"id":"a","lengthMm":600,"quantity":2}]。
 
   mycad dxf [--json] [--out <path.dxf>] [--file <path> | --preset <id> | --profile <path|->]
-      输出截面轮廓 DXF（AC1009，LINE 实体，单位 mm）。不给 --out 则打印到 stdout。
+      输出截面 DXF（AC1009，LINE/CIRCLE 实体，单位 mm）。
+      几何 JSON 可带 "circles":[{"center":[x,y],"diameter":6.5}] 输出圆孔（端面孔位图）。
+      不给 --out 则打印到 stdout。
 
   mycad help | version
       --help / -h       显示本帮助
@@ -247,7 +267,23 @@ function parseJsonText(text: string, hint: string): unknown {
   }
 }
 
-function parseInput(text: string): { outer: Vec2[]; holes: Vec2[][] } {
+function parseCircles(raw: readonly unknown[]): CircleSpec[] {
+  return raw.map((item, i): CircleSpec => {
+    const where = `circles[${i}]`;
+    if (!isRecord(item)) fail('E_INPUT_SHAPE', `${where} 必须是对象`, '形如 {"center":[x,y],"diameter":6.5}');
+    for (const key of Object.keys(item)) {
+      if (!['center', 'diameter'].includes(key)) fail('E_INPUT_SHAPE', `${where} 含未知字段：${key}`, '允许：center、diameter');
+    }
+    const center = parsePoint(item['center'], `${where}.center`);
+    const diameter = item['diameter'];
+    if (typeof diameter !== 'number' || !Number.isFinite(diameter) || diameter <= 0) {
+      fail('E_INPUT_SHAPE', `${where}.diameter 必须是正数`, '直径单位 mm');
+    }
+    return { center, diameterMm: diameter };
+  });
+}
+
+function parseInput(text: string): { outer: Vec2[]; holes: Vec2[][]; circles: CircleSpec[] } {
   const data = parseJsonText(text, '输入形如 {"outer": [[0,0],[40,0],[40,20],[0,20]], "holes": []}');
 
   if (!isRecord(data)) {
@@ -270,7 +306,14 @@ function parseInput(text: string): { outer: Vec2[]; holes: Vec2[][] } {
     return parsePoints(hole, `holes[${i}]`);
   });
 
-  return { outer, holes };
+  const circlesRaw = data['circles'];
+  let circles: CircleSpec[] = [];
+  if (circlesRaw !== undefined) {
+    if (!Array.isArray(circlesRaw)) fail('E_INPUT_SHAPE', 'circles 必须是数组', 'circles 为圆孔数组，仅 dxf 命令使用');
+    circles = parseCircles(circlesRaw);
+  }
+
+  return { outer, holes, circles };
 }
 
 /** 显示层噪声清理：小于重合容差的量按 0 输出，避免形心出现 -6.6e-19 这类伪精度。 */
@@ -331,6 +374,7 @@ interface SectionInput {
   readonly source: string;
   readonly outer: Vec2[];
   readonly holes: Vec2[][];
+  readonly circles: CircleSpec[];
   readonly profileSpec: ProfileSpec | null;
   readonly profileMeta: ProfileMeta | null;
 }
@@ -340,6 +384,7 @@ function resolveSectionInput(flags: Flags): SectionInput {
   let title = 'stdin';
   let outer: Vec2[];
   let holes: Vec2[][];
+  let circles: CircleSpec[] = [];
   let profileSpec: ProfileSpec | null = null;
   let profileMeta: ProfileMeta | null = null;
 
@@ -365,14 +410,18 @@ function resolveSectionInput(flags: Flags): SectionInput {
     if (flags.file !== null) title = flags.file;
     outer = parsed.outer;
     holes = parsed.holes;
+    circles = parsed.circles;
   }
 
-  return { source: title, outer, holes, profileSpec, profileMeta };
+  return { source: title, outer, holes, circles, profileSpec, profileMeta };
 }
 
 function cmdSection(args: readonly string[]): number {
   const flags = parseFlags(args);
   const input = resolveSectionInput(flags);
+  if (input.circles.length > 0) {
+    fail('E_USAGE', 'circles 只用于 dxf 命令', 'section 是几何闭合多边形计算，圆孔不参与截面特性');
+  }
   const { outer, holes } = input;
   const props = sectionProperties(outer, holes);
 
@@ -687,8 +736,11 @@ function cmdCut(args: readonly string[]): number {
 function cmdDxf(args: readonly string[]): number {
   const flags = parseFlags(args, { allowOut: true });
   const input = resolveSectionInput(flags);
-  const dxf = sectionToDxf(input.outer, input.holes);
-  const lineCount = dxf.split('\n').filter((line, i, all) => line === 'LINE' && all[i - 1] === '0').length;
+  const dxf = sectionToDxf(input.outer, input.holes, { circles: input.circles });
+  const countEntity = (name: string): number =>
+    dxf.split('\n').filter((line, i, all) => line === name && all[i - 1] === '0').length;
+  const lineCount = countEntity('LINE');
+  const circleCount = countEntity('CIRCLE');
 
   if (flags.out !== null) writeTextFile(flags.out, dxf);
   if (flags.json) {
@@ -702,6 +754,7 @@ function cmdDxf(args: readonly string[]): number {
           format: DXF_PROVENANCE.format,
           units: 'mm',
           lineCount,
+          circleCount,
           content: dxf,
           provenance: DXF_PROVENANCE,
         },
@@ -712,10 +765,148 @@ function cmdDxf(args: readonly string[]): number {
   } else if (flags.out === null) {
     process.stdout.write(dxf);
   } else {
-    console.log(`已写入 DXF：${flags.out}（${lineCount} 条 LINE）`);
+    console.log(`已写入 DXF：${flags.out}（${lineCount} 条 LINE，${circleCount} 个 CIRCLE）`);
     console.log(`边界：${DXF_PROVENANCE.disclaimer}`);
   }
   return EXIT.ok;
+}
+
+function serializeConnectPlan(plan: ConnectPlan): Record<string, unknown> {
+  return {
+    joints: plan.joints.map((joint) => ({
+      index: joint.index,
+      point: pointJson(joint.point),
+      kind: joint.kind,
+      strategy: joint.strategy,
+      ends: joint.ends,
+      throughMemberId: joint.throughMemberId,
+      holes: joint.holes,
+      hardware: joint.hardware,
+      recommendedTrims: joint.recommendedTrims,
+      warnings: joint.warnings,
+    })),
+    hardwareSummary: plan.hardwareSummary,
+    singleEnds: plan.singleEnds,
+    rules: plan.rules,
+  };
+}
+
+function printConnect(plan: ConnectPlan): void {
+  const kindLabel: Record<string, string> = { corner: '角接', tee: 'T 接', splice: '对接', undecided: '未定' };
+  const strategyLabel: Record<string, string> = { 'angle-bracket': '角件', 'internal-peg': '内置对接棒', manual: '人工' };
+  console.log(`关节 ${plan.joints.length} 个：`);
+  for (const joint of plan.joints) {
+    const ends = joint.ends.map((e) => `${e.memberId}.${e.end}(${e.axis})`).join('、');
+    console.log(`  #${joint.index} ${kindLabel[joint.kind] ?? joint.kind} @ (${joint.point.x}, ${joint.point.y}, ${joint.point.z}) ${strategyLabel[joint.strategy] ?? joint.strategy}：${ends}`);
+    for (const hole of joint.holes) {
+      const pos = hole.at === 'interior' ? `距 start ${human(hole.alongStartMm ?? 0)} mm` : `距端面 ${human(hole.fromJointEndMm ?? 0)} mm`;
+      console.log(`      孔：${hole.memberId}.${hole.at}/${hole.face} ${pos}，${hole.boltSeries}${hole.diameterMm === null ? '' : `（Ø${hole.diameterMm}）`}，轴向 ${hole.boltAxis}`);
+    }
+    for (const item of joint.hardware) {
+      const len = item.lengthMm === null ? '' : ` × ${human(item.lengthMm)} mm`;
+      console.log(`      件：${item.label}${item.size ? ` ${item.size}` : ''}${len} × ${item.quantity}`);
+    }
+    for (const trim of joint.recommendedTrims) {
+      console.log(`      让量：${trim.memberId}.${trim.end} −${human(trim.trimMm)} mm（${trim.reason}）`);
+    }
+    for (const warning of joint.warnings) console.log(`      警告：${warning}`);
+  }
+  if (plan.singleEnds.length > 0) {
+    console.log(`悬空端点（无连接）：${plan.singleEnds.join('、')}`);
+  }
+  console.log('');
+  console.log('连接件汇总：');
+  for (const item of plan.hardwareSummary) {
+    const len = item.lengthMm === null ? '' : ` × ${human(item.lengthMm)} mm`;
+    console.log(`  ${item.label}${item.size ? ` ${item.size}` : ''}${len}：${item.quantity}`);
+  }
+  console.log('');
+  console.log(`规则来源：${plan.rules.source}`);
+  console.log(`方法：${CONNECT_PROVENANCE.method}`);
+  console.log(`假设：${CONNECT_PROVENANCE.assumptions.join('；')}`);
+  console.log(`局限：${CONNECT_PROVENANCE.limitations.join('；')}`);
+  console.log(`免责：${CONNECT_PROVENANCE.disclaimer}`);
+}
+
+function cmdConnect(args: readonly string[]): number {
+  const flags = parseFlags(args);
+  assertNoPresetOrProfile(flags, 'connect');
+  const text = readInput(flags.file);
+  const raw = parseJsonText(text, 'connect 输入形如 {"frame":{...}} 或裸框架 JSON');
+  const { frame, options } = parseConnectInput(raw);
+  const model = buildFrame(frame);
+  const plan = planConnections(model, options);
+
+  if (flags.json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          command: 'connect',
+          version: readVersion(),
+          units: UNIT_SCHEMA,
+          plan: serializeConnectPlan(plan),
+          provenance: CONNECT_PROVENANCE,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    printConnect(plan);
+  }
+  return EXIT.ok;
+}
+
+function printCheck(result: CheckResult): void {
+  console.log(`工况：${result.case}；公式：${result.formulas.join('，')}`);
+  if (result.maxMomentNmm !== null) console.log(`弯矩 Mmax：${human(result.maxMomentNmm)} N*mm`);
+  if (result.maxShearN !== null) console.log(`剪力 Vmax：${human(result.maxShearN)} N`);
+  if (result.bendingStressMpa !== null) console.log(`弯曲应力 σ：${human(result.bendingStressMpa)} MPa（许用 ${result.inputs.allowableMpa} MPa，来源：${result.inputs.allowableSource}）`);
+  if (result.deflectionMm !== null) console.log(`最大挠度 δ：${human(result.deflectionMm)} mm（1/${result.deflectionSpanRatio === null ? '?' : (1 / result.deflectionSpanRatio).toFixed(1)}）`);
+  if (result.slenderness !== null) console.log(`柔度 λ：${human(result.slenderness)}（i=${human(result.radiusOfGyrationMm ?? 0)} mm）`);
+  if (result.eulerCriticalN !== null) console.log(`欧拉临界力 Pcr：${human(result.eulerCriticalN)} N（μ=${result.limits.mu}，来源：${result.limits.muSource}；SF=${result.limits.safetyFactor} → 许用 ${human(result.allowableLoadN ?? 0)} N）`);
+  const utils: string[] = [];
+  if (result.utilizations.stress !== null) utils.push(`应力 ${result.utilizations.stress.toFixed(4)}`);
+  if (result.utilizations.deflection !== null) utils.push(`挠度 ${result.utilizations.deflection.toFixed(4)}`);
+  if (result.utilizations.buckling !== null) utils.push(`稳定 ${result.utilizations.buckling.toFixed(4)}`);
+  console.log(`利用率：${utils.join('，') || '无'}`);
+  console.log(`结论：${{ pass: '通过', fail: '不通过', incomplete: '不完整（缺少一项校核）' }[result.verdict]}`);
+  for (const reason of result.failureReasons) console.log(`  - ${reason}`);
+  for (const warning of result.warnings) console.log(`  警告：${warning}`);
+  console.log(`E=${result.inputs.eMpa} MPa 来源：${result.inputs.eSource}；I/W：${result.inputs.bendingNote}`);
+  console.log(`适用范围：${CHECK_PROVENANCE.applicability.join('；')}`);
+  console.log(`保守性：${CHECK_PROVENANCE.conservatism.join('；')}`);
+  console.log(`免责：${CHECK_PROVENANCE.disclaimer}`);
+}
+
+function cmdCheck(args: readonly string[]): number {
+  const flags = parseFlags(args);
+  assertNoPresetOrProfile(flags, 'check');
+  const text = readInput(flags.file);
+  const raw = parseJsonText(text, '校核输入见 mycad help 的 check 段；case ∈ ss_udl/ss_point/cant_point/cant_udl/column');
+  const input = parseCheckInput(raw);
+  const result = runCheck(input);
+
+  if (flags.json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: result.verdict !== 'fail',
+          command: 'check',
+          version: readVersion(),
+          units: UNIT_SCHEMA,
+          result,
+          provenance: CHECK_PROVENANCE,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    printCheck(result);
+  }
+  return result.verdict === 'fail' ? EXIT.verifyFailed : EXIT.ok;
 }
 
 function cmdBench(args: readonly string[]): number {
@@ -793,6 +984,10 @@ function run(argv: readonly string[]): number {
       return cmdReport(rest);
     case 'frame':
       return cmdFrame(rest);
+    case 'connect':
+      return cmdConnect(rest);
+    case 'check':
+      return cmdCheck(rest);
     case 'bom':
       return cmdBom(rest);
     case 'cut':
@@ -808,7 +1003,7 @@ function run(argv: readonly string[]): number {
       console.log(`mycad ${readVersion()}`);
       return EXIT.ok;
     default:
-      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、report、frame、bom、cut、dxf、bench、help、version');
+      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、report、frame、connect、check、bom、cut、dxf、bench、help、version');
   }
 }
 
@@ -833,7 +1028,7 @@ function describeError(error: unknown): ErrorInfo {
       reason: error.reason,
     };
   }
-  if (error instanceof FrameInputError || error instanceof CutInputError) {
+  if (error instanceof FrameInputError || error instanceof CutInputError || error instanceof ConnectError || error instanceof CheckError) {
     return {
       code: error.code,
       message: error.message,

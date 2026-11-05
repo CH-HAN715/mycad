@@ -16,7 +16,9 @@
     ".": "./src/index.ts",
     "./geom": "./src/geom/index.ts",
     "./frame": "./src/frame/index.ts",
+    "./connect": "./src/connect/index.ts",
     "./production": "./src/production/index.ts",
+    "./check": "./src/check/index.ts",
     "./io": "./src/io/index.ts",
     "./report": "./src/report/sectionReport.ts"
   },

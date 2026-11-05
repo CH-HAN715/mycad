@@ -247,8 +247,11 @@ describe('mycad 元命令', () => {
     assert.ok(result.stdout.includes('mycad section'));
     assert.ok(result.stdout.includes('mycad report'));
     assert.ok(result.stdout.includes('mycad frame'));
+    assert.ok(result.stdout.includes('mycad connect'));
+    assert.ok(result.stdout.includes('mycad check'));
     assert.ok(result.stdout.includes('mycad bom'));
     assert.ok(result.stdout.includes('mycad cut'));
+    assert.ok(result.stdout.includes('mycad dxf'));
     assert.ok(result.stdout.includes('mycad bench'));
   });
 
@@ -256,5 +259,178 @@ describe('mycad 元命令', () => {
     const result = run(['frobnicate', '--json']);
     assert.equal(result.status, 2);
     assert.equal((JSON.parse(result.stdout) as { error: { code: string } }).error.code, 'E_USAGE');
+  });
+});
+
+const SLOT_FRAME = JSON.stringify({
+  profiles: [
+    {
+      id: 'p20',
+      spec: {
+        width: 20,
+        height: 20,
+        slot: { opening: 6, depth: 5.5, headWidth: 8, headStart: 2 },
+        bore: { radius: 2.25, segments: 8 },
+      },
+    },
+  ],
+  members: [
+    { id: 'h1', profileId: 'p20', start: [0, 0, 0], end: [200, 0, 0] },
+    { id: 'v1', profileId: 'p20', start: [200, 0, 0], end: [200, 150, 0] },
+  ],
+});
+
+describe('mycad connect', () => {
+  it('角接输出连接件汇总与孔位，provenance 带规则来源', () => {
+    const result = run(['connect', '--json'], SLOT_FRAME);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      command: string;
+      plan: {
+        joints: { kind: string; strategy: string; holes: unknown[] }[];
+        hardwareSummary: { kind: string; quantity: number }[];
+        rules: { source: string };
+      };
+      provenance: { disclaimer: string };
+    };
+    assert.equal(payload.ok, true);
+    assert.equal(payload.command, 'connect');
+    assert.equal(payload.plan.joints[0]!.kind, 'corner');
+    assert.equal(payload.plan.joints[0]!.strategy, 'angle-bracket');
+    assert.equal(payload.plan.joints[0]!.holes.length, 4);
+    const bracket = payload.plan.hardwareSummary.find((h) => h.kind === 'angle-bracket');
+    assert.ok(bracket && bracket.quantity === 2);
+    assert.ok(payload.plan.rules.source.includes('工程惯例'));
+    assert.ok(payload.provenance.disclaimer.length > 0);
+  });
+
+  it('非法 rules 走结构化错误，退出码 2', () => {
+    const bad = JSON.stringify({ frame: JSON.parse(SLOT_FRAME), options: { rules: { bracketHolePitchMm: -5 } } });
+    const result = run(['connect', '--json'], bad);
+    assert.equal(result.status, 2);
+    const err = JSON.parse(result.stdout) as { ok: false; error: { code: string; reason: string } };
+    assert.equal(err.error.code, 'E_INPUT_CONNECT');
+    assert.equal(err.error.reason, 'invalid_rules');
+  });
+
+  it('人类可读模式输出汇总与免责', () => {
+    const result = run(['connect'], SLOT_FRAME);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes('角接'));
+    assert.ok(result.stdout.includes('连接件汇总'));
+    assert.ok(result.stdout.includes('免责'));
+  });
+});
+
+describe('mycad check', () => {
+  const PASS_INPUT = JSON.stringify({
+    case: 'ss_point',
+    lengthMm: 800,
+    eMpa: 70000,
+    eSource: '70 GPa：工程惯例，非规范条文',
+    profile: {
+      width: 20,
+      height: 20,
+      slot: { opening: 6, depth: 5.5, headWidth: 8, headStart: 2 },
+      bore: { radius: 2.25, segments: 8 },
+    },
+    bendingAxis: 'x',
+    pN: 100,
+    allowableMpa: 80,
+    allowableSource: '测试假设：工程惯例，非规范条文',
+    deflectionRatioLimit: 250,
+    deflectionSource: '工程惯例，非规范条文',
+  });
+
+  it('通过工况退出码 0，JSON 带公式与保守性', () => {
+    const result = run(['check', '--json'], PASS_INPUT);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      result: { verdict: string; formulas: string[]; deflectionMm: number };
+      provenance: { conservatism: string[]; disclaimer: string };
+    };
+    assert.equal(payload.ok, true);
+    assert.equal(payload.result.verdict, 'pass');
+    assert.ok(payload.result.formulas[0]!.includes('48'));
+    assert.ok(payload.provenance.conservatism.length >= 3);
+  });
+
+  it('超限工况退出码 1（校验不通过）', () => {
+    const failInput = JSON.stringify({
+      case: 'ss_udl',
+      lengthMm: 1000,
+      eMpa: 70000,
+      eSource: '测试',
+      section: { areaMm2: 2500, iMm4: 1e6, wMm3: 5e4 },
+      qNPerMm: 10,
+      allowableMpa: 20,
+      allowableSource: '测试',
+    });
+    const result = run(['check', '--json'], failInput);
+    assert.equal(result.status, 1);
+    const payload = JSON.parse(result.stdout) as { ok: boolean; result: { verdict: string; failureReasons: string[] } };
+    assert.equal(payload.ok, false);
+    assert.equal(payload.result.verdict, 'fail');
+    assert.ok(payload.result.failureReasons.length > 0);
+  });
+
+  it('column 缺 mu 报 E_INPUT_CHECK/missing_mu', () => {
+    const result = run(['check', '--json'], JSON.stringify({
+      case: 'column',
+      lengthMm: 1500,
+      eMpa: 70000,
+      eSource: '测试',
+      section: { areaMm2: 2500, iMm4: 5e5, wMm3: 5e4 },
+      pN: 1000,
+      allowableMpa: 80,
+      allowableSource: '测试',
+      safetyFactor: 3,
+    }));
+    assert.equal(result.status, 2);
+    const err = JSON.parse(result.stdout) as { error: { code: string; reason: string } };
+    assert.equal(err.error.code, 'E_INPUT_CHECK');
+    assert.equal(err.error.reason, 'missing_mu');
+  });
+});
+
+describe('mycad dxf 圆孔', () => {
+  it('circles 输出 CIRCLE 实体，半径为直径一半', () => {
+    const input = JSON.stringify({
+      outer: [[0, 0], [40, 0], [40, 20], [0, 20]],
+      holes: [],
+      circles: [{ center: [20, 10], diameter: 6.5 }],
+    });
+    const result = run(['dxf', '--json'], input);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as { circleCount: number; lineCount: number; content: string };
+    assert.equal(payload.circleCount, 1);
+    assert.equal(payload.lineCount, 4);
+    assert.ok(payload.content.includes('CIRCLE'));
+    const lines = payload.content.split('\n');
+    const circleIdx = lines.indexOf('CIRCLE');
+    assert.ok(circleIdx >= 0);
+    const r40 = lines.indexOf('40', circleIdx);
+    assert.ok(r40 > circleIdx);
+    assert.equal(lines[r40 + 1], '3.25');
+  });
+
+  it('section 命令拒绝 circles（圆孔不参与截面特性）', () => {
+    const input = JSON.stringify({
+      outer: [[0, 0], [40, 0], [40, 20], [0, 20]],
+      circles: [{ center: [20, 10], diameter: 6.5 }],
+    });
+    const result = run(['section', '--json'], input);
+    assert.equal(result.status, 2);
+  });
+
+  it('直径非正数拒绝', () => {
+    const input = JSON.stringify({
+      outer: [[0, 0], [40, 0], [40, 20], [0, 20]],
+      circles: [{ center: [20, 10], diameter: 0 }],
+    });
+    const result = run(['dxf', '--json'], input);
+    assert.equal(result.status, 2);
   });
 });
