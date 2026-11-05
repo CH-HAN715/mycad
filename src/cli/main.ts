@@ -15,6 +15,8 @@ import { GeometryInputError, v2 } from '../geom/polygon.ts';
 import type { Vec2 } from '../geom/polygon.ts';
 import type { ProfileMeta, ProfileSpec } from '../geom/profile.ts';
 import { PROFILE_PROVENANCE, buildProfile, parseProfileSpec } from '../geom/profile.ts';
+import type { ProfilePreset } from '../geom/presets.ts';
+import { PROFILE_PRESETS, findProfilePreset, presetIds } from '../geom/presets.ts';
 import { TOL } from '../geom/tolerance.ts';
 import { UNIT_SCHEMA } from '../geom/units.ts';
 import { buildSectionReport, renderSectionReportMarkdown, serializeSectionValues } from '../report/sectionReport.ts';
@@ -55,7 +57,7 @@ function fail(code: string, message: string, hint: string, exitCode: number = EX
 const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截面 DSL、L2 截面特性、L3 连接规则、L4 框架、L5 BOM/下料、L6 标准工况校核、L7 截面 DXF）
 
 用法：
-  mycad section [--json] [--file <path> | --preset <id> | --profile <path|->]
+  mycad section [--json] [--file <path> | --preset <id> | --profile <path|-> | --preset-profile <id>]
       从 JSON 读取外轮廓与孔洞，计算面积、形心、Ix/Iy/Ixy、主轴、W。
       输入形如：{"outer": [[0,0],[40,0],[40,20],[0,20]], "holes": [[[...]]]}
       不给 --file 时从 stdin 读取。
@@ -65,10 +67,15 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
        "slot":{"opening":6,"depth":5.5,"headWidth":8,"headStart":2},
        "bore":{"radius":2.25,"sagitta":0.01}}
 
+      --preset-profile 使用内置型材预设（mycad presets 查看全部），例如 eu2020、eu4040。
+
+  mycad presets [--json]
+      列出内置型材预设：几何参数、厂家公布值、来源与未证实字段清单。
+
   mycad bench [--json]
       跑手算对照算例库，逐项比较并给出最大相对误差。
 
-  mycad report [--json] [--out <path.md>] [--file <path> | --preset <id> | --profile <path|->]
+  mycad report [--json] [--out <path.md>] [--file <path> | --preset <id> | --profile <path|-> | --preset-profile <id>]
       生成可复核的 Markdown 报告：结果 + 公式 + 单位 + 假设 + 局限 + 免责。
       --out 写入文件（自动创建父目录）；不给则打印到 stdout。
       --json 输出机器可读报告对象，可与其他选项组合。
@@ -95,7 +102,7 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
   mycad cut [--json] [--file <path|->] --stock <mm> --kerf <mm>
       一维定尺下料。输入形如 [{"id":"a","lengthMm":600,"quantity":2}]。
 
-  mycad dxf [--json] [--out <path.dxf>] [--file <path> | --preset <id> | --profile <path|->]
+  mycad dxf [--json] [--out <path.dxf>] [--file <path> | --preset <id> | --profile <path|-> | --preset-profile <id>]
       输出截面 DXF（AC1009，LINE/CIRCLE 实体，单位 mm）。
       几何 JSON 可带 "circles":[{"center":[x,y],"diameter":6.5}] 输出圆孔（端面孔位图）。
       不给 --out 则打印到 stdout。
@@ -122,6 +129,7 @@ interface Flags {
   readonly file: string | null;
   readonly preset: string | null;
   readonly profile: string | null;
+  readonly presetProfile: string | null;
   readonly out: string | null;
   readonly stock: number | null;
   readonly kerf: number | null;
@@ -147,6 +155,7 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
   let file: string | null = null;
   let preset: string | null = null;
   let profile: string | null = null;
+  let presetProfile: string | null = null;
   let out: string | null = null;
   let stock: number | null = null;
   let kerf: number | null = null;
@@ -173,6 +182,12 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
       const value = args[++i];
       if (value === undefined) fail('E_USAGE', '--profile 缺少路径', '用法：mycad section --profile <path|->，- 表示 stdin');
       profile = value;
+      continue;
+    }
+    if (arg === '--preset-profile') {
+      const value = args[++i];
+      if (value === undefined) fail('E_USAGE', '--preset-profile 缺少型材 id', `可用：${presetIds().join('、')}`);
+      presetProfile = value;
       continue;
     }
     if (arg === '--out' || arg === '-o') {
@@ -205,11 +220,11 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
     fail('E_USAGE', `未知参数：${arg}`, '运行 mycad help 查看用法');
   }
 
-  const sources = [file, preset, profile].filter((v) => v !== null);
+  const sources = [file, preset, profile, presetProfile].filter((v) => v !== null);
   if (sources.length > 1) {
-    fail('E_USAGE', '--file、--preset、--profile 只能选一个', '二选一：读几何 JSON、跑内置算例、或读型材规格');
+    fail('E_USAGE', '--file、--preset、--profile、--preset-profile 只能选一个', '四选一：读几何 JSON、跑内置算例、读型材规格、或用内置型材预设');
   }
-  return { json, file, preset, profile, out, stock, kerf };
+  return { json, file, preset, profile, presetProfile, out, stock, kerf };
 }
 
 function readInput(file: string | null): string {
@@ -377,9 +392,10 @@ interface SectionInput {
   readonly circles: CircleSpec[];
   readonly profileSpec: ProfileSpec | null;
   readonly profileMeta: ProfileMeta | null;
+  readonly profilePreset: ProfilePreset | null;
 }
 
-/** section 与 report 共用的输入解析：几何 JSON、内置算例、参数化型材规格。 */
+/** section 与 report 共用的输入解析：几何 JSON、内置算例、参数化型材规格、内置型材预设。 */
 function resolveSectionInput(flags: Flags): SectionInput {
   let title = 'stdin';
   let outer: Vec2[];
@@ -387,6 +403,7 @@ function resolveSectionInput(flags: Flags): SectionInput {
   let circles: CircleSpec[] = [];
   let profileSpec: ProfileSpec | null = null;
   let profileMeta: ProfileMeta | null = null;
+  let profilePreset: ProfilePreset | null = null;
 
   if (flags.preset !== null) {
     const found = VERIFY_CASES.find((c) => c.id === flags.preset);
@@ -396,6 +413,18 @@ function resolveSectionInput(flags: Flags): SectionInput {
     title = `preset:${found.id}`;
     outer = [...found.outer];
     holes = found.holes.map((h) => [...h]);
+  } else if (flags.presetProfile !== null) {
+    const found = findProfilePreset(flags.presetProfile);
+    if (found === undefined) {
+      fail('E_USAGE', `未知型材预设：${flags.presetProfile}`, `可用：${presetIds().join('、')}`);
+    }
+    profilePreset = found;
+    profileSpec = found.spec;
+    const geometry = buildProfile(found.spec);
+    outer = [...geometry.outer];
+    holes = geometry.holes.map((hole) => [...hole]);
+    profileMeta = geometry.meta;
+    title = `preset-profile:${found.id}`;
   } else if (flags.profile !== null) {
     const text = readInput(flags.profile === '-' ? null : flags.profile);
     const raw = parseJsonText(text, '型材规格形如 {"width":20,"height":20,"slot":{...},"bore":{...}}');
@@ -413,7 +442,29 @@ function resolveSectionInput(flags: Flags): SectionInput {
     circles = parsed.circles;
   }
 
-  return { source: title, outer, holes, circles, profileSpec, profileMeta };
+  return { source: title, outer, holes, circles, profileSpec, profileMeta, profilePreset };
+}
+
+function cmdPresets(args: readonly string[]): number {
+  const flags = parseFlags(args);
+  if (flags.json) {
+    console.log(
+      JSON.stringify({ ok: true, command: 'presets', version: readVersion(), presets: PROFILE_PRESETS }, null, 2),
+    );
+    return EXIT.ok;
+  }
+  for (const preset of PROFILE_PRESETS) {
+    console.log(`${preset.id}  ${preset.title}`);
+    console.log(`  几何：${preset.spec.width}×${preset.spec.height}，槽口 ${preset.spec.slot?.opening ?? '—'}，中心孔 r=${preset.spec.bore?.radius ?? '—'}`);
+    if (preset.reference !== undefined) {
+      console.log(`  厂家值：米重 ${preset.reference.massPerMeterKg ?? '—'} kg/m，Ix ${preset.reference.ixMm4 ?? '—'} mm^4`);
+      console.log(`  来源：${preset.reference.sourceTitle}（核对于 ${preset.reference.checkedAt}）`);
+    }
+    for (const field of preset.unverifiedFields) console.log(`  未证实：${field}`);
+    console.log('');
+  }
+  console.log('尺寸出处与矛盾记录见 docs/型材数据源.md；理想化截面不含空心腔，截面特性偏大。');
+  return EXIT.ok;
 }
 
 function cmdSection(args: readonly string[]): number {
@@ -442,6 +493,7 @@ function cmdSection(args: readonly string[]): number {
           ...(input.profileMeta !== null && input.profileSpec !== null
             ? { profile: { spec: input.profileSpec, meta: input.profileMeta, provenance: PROFILE_PROVENANCE } }
             : {}),
+          ...(input.profilePreset !== null ? { profilePreset: input.profilePreset } : {}),
           provenance: SECTION_PROVENANCE,
         },
         null,
@@ -450,8 +502,31 @@ function cmdSection(args: readonly string[]): number {
     );
   } else {
     printSection(props, input.profileMeta);
+    if (input.profilePreset !== null) printPresetReference(input.profilePreset, props);
   }
   return EXIT.ok;
+}
+
+/** 预设型材：并列输出厂家公布值与理想化计算值，声明偏差方向（AGENTS.md 十一.1/十一.5）。 */
+function printPresetReference(preset: ProfilePreset, props: SectionProperties): void {
+  console.log('');
+  console.log(`型材预设：${preset.id}（${preset.title}）`);
+  const ref = preset.reference;
+  if (ref !== undefined) {
+    const rows: readonly (readonly [string, string, string])[] = [
+      ['Ix', ref.ixMm4 === undefined ? '—' : `${human(ref.ixMm4)} mm^4`, `${human(props.ix)} mm^4`],
+      ['Iy', ref.iyMm4 === undefined ? '—' : `${human(ref.iyMm4)} mm^4`, `${human(props.iy)} mm^4`],
+      ['米重', ref.massPerMeterKg === undefined ? '—' : `${ref.massPerMeterKg} kg/m`, `${human(props.area * 2.7e-3)} kg/m（6063 密度推算）`],
+    ];
+    console.log('                厂家公布值                理想化截面计算值');
+    for (const [label, published, computed] of rows) {
+      console.log(`${padLabel(label, 8)}${published.padEnd(22)}${computed}`);
+    }
+    console.log('校核取值优先用厂家公布值；理想化截面不含空心腔，面积/惯性矩系统性偏大。');
+    if (ref.sourceUrl !== '') console.log(`来源：${ref.sourceTitle}（${ref.sourceUrl}，核对于 ${ref.checkedAt}）`);
+  }
+  for (const note of preset.notes) console.log(`注：${note}`);
+  for (const field of preset.unverifiedFields) console.log(`未证实：${field}`);
 }
 
 function writeTextFile(path: string, text: string): void {
@@ -490,8 +565,8 @@ function cmdReport(args: readonly string[]): number {
 }
 
 function assertNoPresetOrProfile(flags: Flags, command: string): void {
-  if (flags.preset !== null || flags.profile !== null) {
-    fail('E_USAGE', `${command} 只接受 --file 或 stdin 的 JSON`, '--preset/--profile 仅用于 section/report');
+  if (flags.preset !== null || flags.profile !== null || flags.presetProfile !== null) {
+    fail('E_USAGE', `${command} 只接受 --file 或 stdin 的 JSON`, '--preset/--profile/--preset-profile 仅用于 section/report/dxf');
   }
 }
 
@@ -978,6 +1053,8 @@ function run(argv: readonly string[]): number {
   switch (command) {
     case 'section':
       return cmdSection(rest);
+    case 'presets':
+      return cmdPresets(rest);
     case 'bench':
       return cmdBench(rest);
     case 'report':
@@ -1003,7 +1080,7 @@ function run(argv: readonly string[]): number {
       console.log(`mycad ${readVersion()}`);
       return EXIT.ok;
     default:
-      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、report、frame、connect、check、bom、cut、dxf、bench、help、version');
+      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、bench、help、version');
   }
 }
 
