@@ -964,17 +964,25 @@ function serializeConnectPlan(plan: ConnectPlan): Record<string, unknown> {
       holes: joint.holes,
       hardware: joint.hardware,
       recommendedTrims: joint.recommendedTrims,
+      miters: joint.miters,
       warnings: joint.warnings,
     })),
     hardwareSummary: plan.hardwareSummary,
     singleEnds: plan.singleEnds,
+    endCaps: plan.endCaps,
+    cornerStrategy: plan.cornerStrategy,
     rules: plan.rules,
   };
 }
 
 function printConnect(plan: ConnectPlan): void {
   const kindLabel: Record<string, string> = { corner: '角接', tee: 'T 接', splice: '对接', undecided: '未定' };
-  const strategyLabel: Record<string, string> = { 'angle-bracket': '角件', 'internal-peg': '内置对接棒', manual: '人工' };
+  const strategyLabel: Record<string, string> = {
+    'angle-bracket': '角件',
+    'internal-peg': '内置对接棒',
+    'miter-45': '45° 斜切',
+    manual: '人工',
+  };
   console.log(`关节 ${plan.joints.length} 个：`);
   for (const joint of plan.joints) {
     const ends = joint.ends.map((e) => `${e.memberId}.${e.end}(${e.axis})`).join('、');
@@ -990,10 +998,17 @@ function printConnect(plan: ConnectPlan): void {
     for (const trim of joint.recommendedTrims) {
       console.log(`      让量：${trim.memberId}.${trim.end} −${human(trim.trimMm)} mm（${trim.reason}）`);
     }
+    for (const miter of joint.miters) {
+      console.log(
+        `      斜切：${miter.memberId}.${miter.end} ${miter.angleDeg}° 长点 ${human(miter.longPointMm)} / 短点 ${human(miter.shortPointMm)} mm（视图 ${miter.view}）`,
+      );
+    }
     for (const warning of joint.warnings) console.log(`      警告：${warning}`);
   }
   if (plan.singleEnds.length > 0) {
     console.log(`悬空端点（无连接）：${plan.singleEnds.join('、')}`);
+    console.log(`端盖需求：${plan.endCaps.map((c) => `${c.memberId}.${c.end} ${c.widthMm}x${c.heightMm}`).join('、')}`);
+    console.log(`  ${plan.endCaps[0]!.sourceNote}`);
   }
   console.log('');
   console.log('连接件汇总：');

@@ -286,6 +286,63 @@ describe('L3 connect 输入解析', () => {
   });
 });
 
+describe('自由端端盖', () => {
+  it('悬空端点生成端盖需求并进入汇总', () => {
+    const model = buildFrame(
+      frame(
+        [{ id: 'pa', spec: SLOT_40 }],
+        [
+          { id: 'A', profileId: 'pa', start: v3(0, 0, 0), end: v3(600, 0, 0) },
+          { id: 'B', profileId: 'pa', start: v3(0, 0, 0), end: v3(0, 0, 750) },
+          { id: 'lonely', profileId: 'pa', start: v3(600, 0, 0), end: v3(600, 400, 0) },
+        ],
+      ),
+    );
+    const plan = planConnections(model);
+    assert.deepEqual(plan.singleEnds, ['B.end', 'lonely.end']);
+    assert.deepEqual(
+      plan.endCaps.map((c) => [c.memberId, c.end, c.widthMm, c.heightMm]),
+      [
+        ['B', 'end', 40, 40],
+        ['lonely', 'end', 40, 40],
+      ],
+    );
+    const cap = plan.hardwareSummary.find((h) => h.kind === 'end-cap');
+    assert.ok(cap !== undefined);
+    assert.equal(cap.quantity, 2);
+    assert.equal(cap.size, '40x40');
+    assert.match(cap.label, /无零件号/);
+  });
+
+  it('闭合回路没有端盖行，两根杆的角接仍按自由端计', () => {
+    const closed = buildFrame(
+      frame(
+        [{ id: 'pa', spec: SLOT_40 }],
+        [
+          { id: 'A', profileId: 'pa', start: v3(0, 0, 0), end: v3(600, 0, 0) },
+          { id: 'B', profileId: 'pa', start: v3(600, 0, 0), end: v3(600, 600, 0) },
+          { id: 'C', profileId: 'pa', start: v3(600, 600, 0), end: v3(0, 600, 0) },
+          { id: 'D', profileId: 'pa', start: v3(0, 600, 0), end: v3(0, 0, 0) },
+        ],
+      ),
+    );
+    const closedPlan = planConnections(closed);
+    assert.deepEqual(closedPlan.endCaps, []);
+    assert.equal(closedPlan.hardwareSummary.some((h) => h.kind === 'end-cap'), false);
+
+    const twoBars = buildFrame(
+      frame(
+        [{ id: 'pa', spec: SLOT_40 }],
+        [
+          { id: 'A', profileId: 'pa', start: v3(0, 0, 0), end: v3(600, 0, 0) },
+          { id: 'B', profileId: 'pa', start: v3(0, 0, 0), end: v3(0, 0, 750) },
+        ],
+      ),
+    );
+    assert.deepEqual(planConnections(twoBars).singleEnds, ['A.end', 'B.end']);
+  });
+});
+
 describe('45° 斜切角接（opt-in）', () => {
   const miterFrame = (second: FrameInput['profiles'][number]['spec']) =>
     buildFrame(

@@ -338,6 +338,21 @@ export function memberDrawingsToDxf(
       circles += 1;
     });
 
+    for (const cap of (plan.endCaps ?? []).filter((c) => c.memberId === member.id)) {
+      const at = cap.end === 'end' ? length : 0;
+      entities.push(
+        text(
+          `END CAP ${cap.widthMm.toFixed(0)}x${cap.heightMm.toFixed(0)} AT ${cap.end.toUpperCase()}`,
+          0,
+          down,
+          TEXT_H,
+          LAYER_DIM,
+        ),
+      );
+      entities.push(vLine(at, topViewAt - 3, topViewAt + width + 3, LAYER_DIM));
+      down += TABLE_ROW;
+    }
+
     originY -= down + BLOCK_TAIL + MEMBER_GAP;
   });
 

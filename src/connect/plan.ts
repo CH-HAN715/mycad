@@ -84,7 +84,7 @@ export interface ConnectorHole {
 }
 
 export interface HardwareItem {
-  readonly kind: 'angle-bracket' | 'slot-nut' | 'bolt' | 'peg';
+  readonly kind: 'angle-bracket' | 'slot-nut' | 'bolt' | 'peg' | 'end-cap';
   readonly label: string;
   readonly size: string | null;
   readonly lengthMm: Mm | null;
@@ -115,10 +115,21 @@ export interface JointPlan {
   readonly warnings: readonly string[];
 }
 
+export interface EndCapItem {
+  readonly memberId: string;
+  readonly end: 'start' | 'end';
+  /** 端盖按截面外形计，mm；不含零件号。 */
+  readonly widthMm: number;
+  readonly heightMm: number;
+  readonly sourceNote: string;
+}
+
 export interface ConnectPlan {
   readonly joints: readonly JointPlan[];
   readonly hardwareSummary: readonly { key: string; kind: HardwareItem['kind']; label: string; size: string | null; lengthMm: Mm | null; quantity: number }[];
   readonly singleEnds: readonly string[];
+  /** 与 singleEnds 一一对应的端盖需求；自由端不等于不需要收尾。 */
+  readonly endCaps: readonly EndCapItem[];
   readonly rules: ConnectRules;
   readonly cornerStrategy: 'bracket' | 'miter45';
 }
@@ -602,7 +613,36 @@ export function planConnections(model: FrameModel, options: ConnectOptions = {})
     }
   }
 
-  return { joints, hardwareSummary: [...summary.values()], singleEnds, rules, cornerStrategy };
+  const endCaps: EndCapItem[] = [];
+  for (const entry of singleEnds) {
+    const [memberId, end] = entry.split('.') as [string, 'start' | 'end'];
+    const ctx = contexts.get(memberId);
+    if (ctx === undefined) continue;
+    const widthMm = ctx.profile.spec.width;
+    const heightMm = ctx.profile.spec.height;
+    const size = `${widthMm.toFixed(0)}x${heightMm.toFixed(0)}`;
+    endCaps.push({
+      memberId,
+      end,
+      widthMm,
+      heightMm,
+      sourceNote: '通用端盖类型，不含零件号；材质与颜色由用户型材库决定',
+    });
+    const key = `end-cap|${size}|`;
+    const existing = summary.get(key);
+    if (existing === undefined) {
+      summary.set(key, {
+        key,
+        kind: 'end-cap',
+        label: '型材端盖（通用，无零件号）',
+        size,
+        lengthMm: null,
+        quantity: 1,
+      });
+    } else existing.quantity += 1;
+  }
+
+  return { joints, hardwareSummary: [...summary.values()], singleEnds, endCaps, rules, cornerStrategy };
 }
 
 /**

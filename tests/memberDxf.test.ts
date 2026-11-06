@@ -249,6 +249,18 @@ describe('mycad memberDxf 长度公差分档', () => {
   });
 });
 
+describe('mycad memberDxf 端盖注记', () => {
+  it('自由端在图上写出 END CAP 与截面尺寸', () => {
+    const model = exampleFrame([
+      { id: '底梁', profileId: 'p20', start: [0, 0, 0], end: [600, 0, 0] },
+      { id: '左柱', profileId: 'p20', start: [0, 0, 0], end: [0, 0, 750] },
+    ]);
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.dxf, /END CAP 20x20 AT END/);
+    assert.equal(out.holeLegend.length, 4);
+  });
+});
+
 describe('mycad memberDxf 图纸文件', () => {
   it('R12 头、毫米单位与 EOF 齐全，实体计数与 stats 一致', () => {
     const model = exampleFrame();
