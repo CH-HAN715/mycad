@@ -27,7 +27,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts tests/**/*.test.ts",
     "cli": "node --disable-warning=ExperimentalWarning src/cli/main.ts",
     "bench": "node --disable-warning=ExperimentalWarning src/cli/main.ts bench",
-    "verify": "pnpm typecheck && pnpm test"
+    "verify": "pnpm typecheck && pnpm test",
+    "release:check": "node scripts/check-release.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

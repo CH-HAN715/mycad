@@ -6,7 +6,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "未找到 node。mycad 需要 Node.js 22+（当前开发用 v22 LTS）。" >&2
+  echo "未找到 node。mycad 需要 Node.js 24+（package.json engines 要求 >=24.0.0，直跑 .ts 依赖 24 的类型剥离）。" >&2
   exit 1
 fi
 
