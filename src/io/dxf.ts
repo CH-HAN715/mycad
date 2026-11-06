@@ -36,7 +36,37 @@ const formatNumber = (value: number): string => {
   return fixed.replace(/\.?0+$/, '') || '0';
 };
 
-function lineEntity(x1: number, y1: number, x2: number, y2: number, layer: string): string {
+/** R12 文档骨架：HEADER（单位 mm）+ ENTITIES + EOF。 */
+export function dxfDocument(entities: readonly string[]): string {
+  return [
+    '0',
+    'SECTION',
+    '2',
+    'HEADER',
+    '9',
+    '$ACADVER',
+    '1',
+    'AC1009',
+    '9',
+    '$INSUNITS',
+    '70',
+    '4',
+    '0',
+    'ENDSEC',
+    '0',
+    'SECTION',
+    '2',
+    'ENTITIES',
+    ...entities,
+    '0',
+    'ENDSEC',
+    '0',
+    'EOF',
+    '',
+  ].join('\n');
+}
+
+export function lineEntity(x1: number, y1: number, x2: number, y2: number, layer: string): string {
   return [
     '0',
     'LINE',
@@ -57,6 +87,37 @@ function lineEntity(x1: number, y1: number, x2: number, y2: number, layer: strin
   ].join('\n');
 }
 
+/** 单行文本；R12 的 group 1 必须在 40/50 之后，且不接受换行。 */
+export function textEntity(
+  value: string,
+  x: number,
+  y: number,
+  height: number,
+  layer: string,
+): string {
+  if (value.includes('\n') || value.includes('\r')) {
+    throw new RangeError('DXF TEXT 不能包含换行');
+  }
+  return [
+    '0',
+    'TEXT',
+    '8',
+    layer,
+    '10',
+    formatNumber(x),
+    '20',
+    formatNumber(y),
+    '30',
+    '0',
+    '40',
+    formatNumber(height),
+    '50',
+    '0',
+    '1',
+    value,
+  ].join('\n');
+}
+
 function contourEntities(contour: readonly Vec2[], layer: string): string[] {
   const entities: string[] = [];
   for (let i = 0; i < contour.length; i++) {
@@ -67,7 +128,7 @@ function contourEntities(contour: readonly Vec2[], layer: string): string[] {
   return entities;
 }
 
-function circleEntity(center: Vec2, diameterMm: number, layer: string): string {
+export function circleEntity(center: Vec2, diameterMm: number, layer: string): string {
   return [
     '0',
     'CIRCLE',
@@ -118,30 +179,5 @@ export function sectionToDxf(
     ...circles.map((circle) => circleEntity(circle.center, circle.diameterMm, layer)),
   ];
 
-  return [
-    '0',
-    'SECTION',
-    '2',
-    'HEADER',
-    '9',
-    '$ACADVER',
-    '1',
-    'AC1009',
-    '9',
-    '$INSUNITS',
-    '70',
-    '4',
-    '0',
-    'ENDSEC',
-    '0',
-    'SECTION',
-    '2',
-    'ENTITIES',
-    ...entities,
-    '0',
-    'ENDSEC',
-    '0',
-    'EOF',
-    '',
-  ].join('\n');
+  return dxfDocument(entities);
 }

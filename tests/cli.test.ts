@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('../src/cli/main.ts', import.meta.url));
@@ -434,3 +436,73 @@ describe('mycad dxf 圆孔', () => {
     assert.equal(result.status, 2);
   });
 });
+
+const DRAW_FRAME = JSON.stringify({
+  profiles: [
+    {
+      id: 'p20',
+      spec: {
+        width: 20,
+        height: 20,
+        slot: { opening: 6, depth: 5, headWidth: 8, headStart: 2 },
+        bore: { radius: 2.25 },
+      },
+      material: { name: '6063-T5', densityKgPerM3: 2700 },
+    },
+  ],
+  members: [
+    { id: '底梁', profileId: 'p20', start: [0, 0, 0], end: [600, 0, 0] },
+    { id: '左柱', profileId: 'p20', start: [0, 0, 0], end: [0, 0, 750] },
+  ],
+});
+
+describe('mycad drawing', () => {
+  it('框架 JSON 输出孔位图 DXF 与 legend，孔位与连接引擎同源', () => {
+    const result = run(['drawing', '--json'], DRAW_FRAME);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout) as {
+      ok: boolean;
+      units: string;
+      datum: string;
+      content: string;
+      memberLegend: { label: string; memberId: string; materialName: string | null }[];
+      holeLegend: { memberId: string; alongBarMm: number | null; inBar: boolean }[];
+      provenance: { limitations: string[]; disclaimer: string };
+    };
+    assert.equal(payload.ok, true);
+    assert.equal(payload.units, 'mm');
+    assert.match(payload.content, /AC1009/);
+    assert.equal(payload.memberLegend.length, 2);
+    assert.equal(payload.memberLegend[0]!.memberId, '底梁');
+    assert.equal(payload.memberLegend[0]!.materialName, '6063-T5');
+    assert.deepEqual(
+      payload.holeLegend.filter((h) => h.memberId === '底梁').map((h) => h.alongBarMm),
+      [15, 15],
+    );
+    assert.ok(payload.holeLegend.every((h) => h.inBar));
+    assert.ok(payload.provenance.limitations.some((l) => l.includes('公差')));
+  });
+
+  it('DXF 正文只含 ASCII，中文杆件名留在 legend', () => {
+    const result = run(['drawing', '--json'], DRAW_FRAME);
+    const payload = JSON.parse(result.stdout) as { content: string };
+    assert.equal(/[^\x00-\x7F]/.test(payload.content), false);
+  });
+
+  it('--out 写入文件并打印基准与边界', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mycad-drawing-'));
+    const target = join(dir, 'member.dxf');
+    const result = run(['drawing', '--out', target], DRAW_FRAME);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /已写入杆件孔位图/);
+    assert.match(result.stdout, /物理端面/);
+    assert.match(readFileSync(target, 'utf8'), /AC1009/);
+  });
+
+  it('drawing 不接受 preset 参数', () => {
+    const result = run(['drawing', '--preset', 'eu2020'], DRAW_FRAME);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /drawing/);
+  });
+});
+

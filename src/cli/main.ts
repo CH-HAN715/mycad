@@ -23,6 +23,7 @@ import { TOL } from '../geom/tolerance.ts';
 import { UNIT_SCHEMA } from '../geom/units.ts';
 import { buildSectionReport, renderSectionReportMarkdown, serializeSectionValues } from '../report/sectionReport.ts';
 import { DXF_PROVENANCE, sectionToDxf } from '../io/dxf.ts';
+import { MEMBER_DXF_PROVENANCE, memberDrawingsToDxf } from '../io/memberDxf.ts';
 import type { FrameInput, FrameModel } from '../frame/model.ts';
 import { FRAME_PROVENANCE, FrameInputError, buildFrame, parseFrameInput } from '../frame/model.ts';
 import type { Bom } from '../production/bom.ts';
@@ -108,6 +109,11 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
       输出截面 DXF（AC1009，LINE/CIRCLE 实体，单位 mm）。
       几何 JSON 可带 "circles":[{"center":[x,y],"diameter":6.5}] 输出圆孔（端面孔位图）。
       不给 --out 则打印到 stdout。
+
+  mycad drawing [--json] [--out <path.dxf>] [--file <path|->]
+      输出杆件孔位图 DXF：每根杆一块，含顶面/侧面视图、孔位表与下料长度。
+      基准为 start 端物理端面；孔位来自连接规则引擎，不含公差与孔深。
+      --json 同时返回 legend（M1/M1-H1 到杆件原名的映射，DXF 内不写中文）。
 
   mycad serve [--port <n>] [--open]
       启动本地网页设计台（只监听 127.0.0.1，默认端口 8617）。--open 自动打开浏览器。
@@ -620,8 +626,8 @@ function assertNoPresetOrProfile(flags: Flags, command: string): void {
   }
 }
 
-function frameInputFromFlags(flags: Flags): FrameInput {
-  assertNoPresetOrProfile(flags, 'frame/bom');
+function frameInputFromFlags(flags: Flags, owner = 'frame/bom'): FrameInput {
+  assertNoPresetOrProfile(flags, owner);
   const text = readInput(flags.file);
   const raw = parseJsonText(
     text,
@@ -896,6 +902,47 @@ function cmdDxf(args: readonly string[]): number {
   return EXIT.ok;
 }
 
+function cmdDrawing(args: readonly string[]): number {
+  const flags = parseFlags(args, { allowOut: true });
+  const model = buildFrame(frameInputFromFlags(flags, 'drawing'));
+  const plan = planConnections(model);
+  const drawing = memberDrawingsToDxf(model, plan);
+
+  if (flags.out !== null) writeTextFile(flags.out, drawing.dxf);
+  if (flags.json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          command: 'drawing',
+          version: readVersion(),
+          format: MEMBER_DXF_PROVENANCE.format,
+          units: 'mm',
+          datum: MEMBER_DXF_PROVENANCE.datum,
+          stats: drawing.stats,
+          memberLegend: drawing.memberLegend,
+          holeLegend: drawing.holeLegend,
+          warnings: drawing.warnings,
+          provenance: MEMBER_DXF_PROVENANCE,
+          content: drawing.dxf,
+        },
+        null,
+        2,
+      ),
+    );
+  } else if (flags.out === null) {
+    process.stdout.write(drawing.dxf);
+  } else {
+    console.log(
+      `已写入杆件孔位图：${flags.out}（${drawing.stats.members} 根杆件，${drawing.stats.holes} 个孔，${drawing.stats.circles} 个圆）`,
+    );
+    console.log(`基准：${MEMBER_DXF_PROVENANCE.datum}`);
+    for (const warning of drawing.warnings) console.log(`警告：${warning}`);
+    console.log(`边界：${MEMBER_DXF_PROVENANCE.disclaimer}`);
+  }
+  return EXIT.ok;
+}
+
 function serializeConnectPlan(plan: ConnectPlan): Record<string, unknown> {
   return {
     joints: plan.joints.map((joint) => ({
@@ -1123,6 +1170,8 @@ function run(argv: readonly string[]): number {
       return cmdCut(rest);
     case 'dxf':
       return cmdDxf(rest);
+    case 'drawing':
+      return cmdDrawing(rest);
     case 'help':
       console.log(USAGE);
       return EXIT.ok;
@@ -1132,7 +1181,7 @@ function run(argv: readonly string[]): number {
       console.log(`mycad ${readVersion()}`);
       return EXIT.ok;
     default:
-      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、serve、bench、help、version');
+      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、drawing、serve、bench、help、version');
   }
 }
 
