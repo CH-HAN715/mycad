@@ -201,10 +201,14 @@ function clearRoot() {
   }
 }
 
+// 引擎约定 z 轴向上、单位 mm；three.js 约定 y 轴向上、单位 m。
+function toScene(p) {
+  return new THREE.Vector3(p.x / 1000, p.z / 1000, -p.y / 1000);
+}
+
 function memberBox(model, member, color) {
-  const s = member.start, e = member.end;
-  const dir = new THREE.Vector3(e.x - s.x, e.y - s.y, e.z - s.z);
-  dir.normalize();
+  const s = toScene(member.start), e = toScene(member.end);
+  const dir = e.sub(s).normalize();
   const profile = model.profiles.find((p) => p.id === member.profileId);
   const w = (profile !== undefined ? profile.spec.width : 20) / 1000;
   const h = (profile !== undefined ? profile.spec.height : 20) / 1000;
@@ -212,7 +216,7 @@ function memberBox(model, member, color) {
   const geo = new THREE.BoxGeometry(cut, h, w);
   const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.55, metalness: 0.25 });
   const mesh = new THREE.Mesh(geo, mat);
-  const mid = new THREE.Vector3(s.x / 1000, s.y / 1000, s.z / 1000).addScaledVector(dir, (member.trimStart + member.cutLength / 2) / 1000);
+  const mid = s.clone().addScaledVector(dir, (member.trimStart + member.cutLength / 2) / 1000);
   mesh.position.copy(mid);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
   return mesh;
@@ -234,7 +238,7 @@ window.render3d = async function render3d() {
     const jointMat = new THREE.MeshStandardMaterial({ color: 0xd7dce4, roughness: 0.4 });
     for (const jt of model.joints) {
       const sp = new THREE.Mesh(jointGeo, jointMat);
-      sp.position.set(jt.point.x / 1000, jt.point.y / 1000, jt.point.z / 1000);
+      sp.position.copy(toScene(jt.point));
       root.add(sp);
     }
     root.updateMatrixWorld(true);
@@ -243,7 +247,7 @@ window.render3d = async function render3d() {
     const size = box.getSize(new THREE.Vector3());
     target.copy(center);
     radius = Math.max(0.8, size.length() * 1.4);
-    info.textContent = model.members.length + ' 根杆件、' + model.joints.length + ' 个关节已渲染（包围盒 ' +
+    info.textContent = model.members.length + ' 根杆件、' + model.joints.length + ' 个关节已渲染（包围盒 宽×高×深 ' +
       Math.round(size.x * 1000) + '×' + Math.round(size.y * 1000) + '×' + Math.round(size.z * 1000) + ' mm，视口 ' +
       viewer.clientWidth + '×' + viewer.clientHeight + 'px）';
   } catch (e) { errEl.textContent = String(e); }
