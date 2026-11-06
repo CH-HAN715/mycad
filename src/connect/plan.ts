@@ -21,7 +21,7 @@ import { DEFAULT_CONNECT_RULES } from './rules.ts';
  */
 
 export type JointKind = 'corner' | 'tee' | 'splice' | 'undecided';
-export type ConnectStrategy = 'angle-bracket' | 'internal-peg' | 'manual';
+export type ConnectStrategy = 'angle-bracket' | 'internal-peg' | 'miter-45' | 'manual';
 
 export class ConnectError extends Error {
   readonly code = 'E_INPUT_CONNECT';
@@ -110,6 +110,8 @@ export interface JointPlan {
   readonly holes: readonly ConnectorHole[];
   readonly hardware: readonly HardwareItem[];
   readonly recommendedTrims: readonly RecommendedTrim[];
+  /** 45° 斜切几何；仅 strategy='miter-45' 时有值。 */
+  readonly miters: readonly MiterCut[];
   readonly warnings: readonly string[];
 }
 
@@ -118,6 +120,7 @@ export interface ConnectPlan {
   readonly hardwareSummary: readonly { key: string; kind: HardwareItem['kind']; label: string; size: string | null; lengthMm: Mm | null; quantity: number }[];
   readonly singleEnds: readonly string[];
   readonly rules: ConnectRules;
+  readonly cornerStrategy: 'bracket' | 'miter45';
 }
 
 export const CONNECT_PROVENANCE = {
@@ -272,7 +275,7 @@ function manualJoint(
   warnings: string[],
   throughMemberId: string | null = null,
 ): JointPlan {
-  return { index, point, kind, strategy: 'manual', ends, throughMemberId, holes: [], hardware: [], recommendedTrims: [], warnings };
+  return { index, point, kind, strategy: 'manual', ends, throughMemberId, holes: [], hardware: [], recommendedTrims: [], miters: [], warnings };
 }
 
 function planBracketJoint(
@@ -398,6 +401,7 @@ function planBracketJoint(
     holes,
     hardware,
     recommendedTrims: trims,
+    miters: [],
     warnings,
   };
 }
@@ -447,7 +451,7 @@ function planSplice(
     trimMm: U.mm(0),
     reason: '同轴对接按端面相碰，无让量',
   }));
-  return { index: jointIndex, point, kind: 'splice', strategy: 'internal-peg', ends, throughMemberId: null, holes: [], hardware, recommendedTrims: trims, warnings: [] };
+  return { index: jointIndex, point, kind: 'splice', strategy: 'internal-peg', ends, throughMemberId: null, holes: [], hardware, recommendedTrims: trims, miters: [], warnings: [] };
 }
 
 function isInteriorPoint(ctx: MemberContext, point: Vec3, tol: number): boolean {
@@ -465,9 +469,32 @@ function isInteriorPoint(ctx: MemberContext, point: Vec3, tol: number): boolean 
 
 export interface ConnectOptions {
   readonly rules?: Record<string, unknown>;
+  /** 角接策略：默认角件；miter45 改为 45° 斜切端面（只给切割几何，不算斜角连接件孔位）。 */
+  readonly cornerStrategy?: 'bracket' | 'miter45';
+}
+
+export interface MiterCut {
+  readonly memberId: string;
+  readonly end: 'start' | 'end';
+  /** 端面与杆轴的夹角，deg。 */
+  readonly angleDeg: number;
+  /** 下料按长点计，mm。 */
+  readonly longPointMm: number;
+  /** 内侧短点，mm；长点与短点的均值等于中心线长。 */
+  readonly shortPointMm: number;
+  /** 斜线出现在哪个视图：关节平面内的截面尺寸对应 top（宽）或 side（高）。 */
+  readonly view: 'top' | 'side';
 }
 
 export function planConnections(model: FrameModel, options: ConnectOptions = {}): ConnectPlan {
+  const cornerStrategy = options.cornerStrategy ?? 'bracket';
+  if (cornerStrategy !== 'bracket' && cornerStrategy !== 'miter45') {
+    throw new ConnectError(
+      `cornerStrategy 只支持 bracket 与 miter45，收到 ${JSON.stringify(cornerStrategy)}`,
+      '默认 bracket 不改现有行为',
+      'invalid_input',
+    );
+  }
   let rules: ConnectRules;
   try {
     rules = options.rules === undefined ? DEFAULT_CONNECT_RULES : parseRulesOverride(options.rules);
@@ -528,6 +555,29 @@ export function planConnections(model: FrameModel, options: ConnectOptions = {})
       const ctxB = contexts.get(joint.ends[1]!.memberId)!;
       if (ctxA.member.axis === ctxB.member.axis) {
         joints.push(planSplice(index++, ctxA, ctxB, joint.point, ends, rules));
+      } else if (cornerStrategy === 'miter45') {
+        const cuts = miterCutsIfPossible(ctxA, ctxB, joint.point);
+        if (cuts === null) {
+          const bracket = planBracketJoint(index++, 'corner', ctxA, ctxB, joint.point, ends, rules);
+          joints.push({
+            ...bracket,
+            warnings: [...bracket.warnings, '斜切条件不成立（两杆在关节平面内的截面半宽不等），已退回角件'],
+          });
+        } else {
+          joints.push({
+            index: index++,
+            point: joint.point,
+            kind: 'corner',
+            strategy: 'miter-45',
+            ends,
+            throughMemberId: null,
+            holes: [],
+            hardware: [],
+            recommendedTrims: [],
+            miters: cuts,
+            warnings: ['斜切只给切割几何，斜角连接件的孔位与零件在本期不计算'],
+          });
+        }
       } else {
         // 角接约定：框架 members 顺序在前的端头让量（可人工改 trim），另一个通长
         joints.push(planBracketJoint(index++, 'corner', ctxA, ctxB, joint.point, ends, rules));
@@ -552,7 +602,39 @@ export function planConnections(model: FrameModel, options: ConnectOptions = {})
     }
   }
 
-  return { joints, hardwareSummary: [...summary.values()], singleEnds, rules };
+  return { joints, hardwareSummary: [...summary.values()], singleEnds, rules, cornerStrategy };
+}
+
+/**
+ * 45° 斜切几何：只在两根杆件**都轴对齐且互相垂直**、且它们在关节平面内的
+ * 截面半宽相等时成立——此时角平分面与每根杆成 45°，长点 = 中心线 + 半宽。
+ * 条件不满足返回 null，由调用方退回角件并说明原因。
+ */
+function miterCutsIfPossible(
+  ctxA: MemberContext,
+  ctxB: MemberContext,
+  point: Vec3,
+): MiterCut[] | null {
+  const axisA = ctxA.member.axis;
+  const axisB = ctxB.member.axis;
+  if (axisA === axisB) return null;
+  const halfA = halfExtentAlong(ctxA, axisB);
+  const halfB = halfExtentAlong(ctxB, axisA);
+  if (Math.abs(halfA - halfB) > 1e-9) return null;
+  return [
+    { ctx: ctxA, half: halfA, otherAxis: axisB },
+    { ctx: ctxB, half: halfB, otherAxis: axisA },
+  ].map(({ ctx, half, otherAxis }) => {
+    const frame = SECTION_FRAME[ctx.member.axis];
+    return {
+      memberId: ctx.member.id,
+      end: ctx.endAt(point),
+      angleDeg: 45,
+      longPointMm: U.mm(ctx.member.centerlineLength + half),
+      shortPointMm: U.mm(ctx.member.centerlineLength - half),
+      view: otherAxis === frame.u ? 'top' : 'side',
+    };
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -573,11 +655,25 @@ export function parseConnectInput(raw: unknown): { frame: FrameInput; options: C
     let options: ConnectOptions = {};
     const optionsRaw = raw['options'];
     if (optionsRaw !== undefined) {
-      if (!isRecord(optionsRaw)) throw new ConnectError('options 必须是对象', '形如 {"rules": {...}}', 'invalid_input');
+      if (!isRecord(optionsRaw)) throw new ConnectError('options 必须是对象', '形如 {"rules": {...}} 或 {"cornerStrategy":"miter45"}', 'invalid_input');
       for (const key of Object.keys(optionsRaw)) {
-        if (key !== 'rules') throw new ConnectError(`options 含未知字段：${key}`, '一期 options 只支持 rules', 'invalid_input');
+        if (!['rules', 'cornerStrategy'].includes(key)) {
+          throw new ConnectError(`options 含未知字段：${key}`, '一期 options 只支持 rules、cornerStrategy', 'invalid_input');
+        }
       }
-      options = { rules: optionsRaw['rules'] as Record<string, unknown> };
+      const rulesField = optionsRaw['rules'];
+      const strategyField = optionsRaw['cornerStrategy'];
+      if (strategyField !== undefined && strategyField !== 'bracket' && strategyField !== 'miter45') {
+        throw new ConnectError(
+          `options.cornerStrategy 只支持 bracket 与 miter45，收到 ${JSON.stringify(strategyField)}`,
+          '不认识的策略不能静默退回默认',
+          'invalid_input',
+        );
+      }
+      options = {
+        ...(rulesField !== undefined ? { rules: rulesField as Record<string, unknown> } : {}),
+        ...(strategyField !== undefined ? { cornerStrategy: strategyField as 'bracket' | 'miter45' } : {}),
+      };
     }
     return { frame: parseFrameInput(raw['frame']), options };
   }

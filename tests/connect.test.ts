@@ -285,3 +285,71 @@ describe('L3 connect 输入解析', () => {
     }
   });
 });
+
+describe('45° 斜切角接（opt-in）', () => {
+  const miterFrame = (second: FrameInput['profiles'][number]['spec']) =>
+    buildFrame(
+      frame(
+        [{ id: 'pa', spec: SLOT_40 }, { id: 'pb', spec: second }],
+        [
+          { id: 'A', profileId: 'pa', start: v3(0, 0, 0), end: v3(600, 0, 0) },
+          { id: 'B', profileId: 'pb', start: v3(0, 0, 0), end: v3(0, 0, 750) },
+        ],
+      ),
+    );
+
+  it('默认策略不变：仍是角件与 8 个孔', () => {
+    const plan = planConnections(miterFrame(SLOT_40));
+    assert.equal(plan.cornerStrategy, 'bracket');
+    assert.equal(plan.joints[0]!.strategy, 'angle-bracket');
+    assert.equal(plan.joints[0]!.holes.length, 8);
+    assert.deepEqual(plan.joints[0]!.miters, []);
+  });
+
+  it('等截面时给 45° 斜切，长点=中心线+半宽、短点=中心线-半宽（手算 620/580 与 770/730）', () => {
+    const plan = planConnections(miterFrame(SLOT_40), { cornerStrategy: 'miter45' });
+    const joint = plan.joints[0]!;
+    assert.equal(joint.strategy, 'miter-45');
+    assert.equal(joint.holes.length, 0);
+    assert.deepEqual(joint.miters.map((m) => [m.memberId, m.end, m.angleDeg, m.longPointMm, m.shortPointMm, m.view]), [
+      ['A', 'start', 45, 620, 580, 'side'],
+      ['B', 'start', 45, 770, 730, 'top'],
+    ]);
+    for (const cut of joint.miters) {
+      assert.equal((cut.longPointMm + cut.shortPointMm) / 2, cut.memberId === 'A' ? 600 : 750);
+    }
+    assert.match(joint.warnings.join('\n'), /斜角连接件的孔位/);
+  });
+
+  it('截面不等时退回角件并说明原因，不硬凑一个假斜角', () => {
+    const plan = planConnections(miterFrame(SLOT_20), { cornerStrategy: 'miter45' });
+    const joint = plan.joints[0]!;
+    assert.equal(joint.strategy, 'angle-bracket');
+    assert.deepEqual(joint.miters, []);
+    assert.ok(joint.holes.length > 0);
+    assert.match(joint.warnings.join('\n'), /截面半宽不等/);
+  });
+
+  it('非法 cornerStrategy 直接拒绝', () => {
+    assert.throws(
+      () => planConnections(miterFrame(SLOT_40), { cornerStrategy: 'miter30' as 'miter45' }),
+      /只支持 bracket 与 miter45/,
+    );
+  });
+
+  it('connect 输入可带 cornerStrategy，未知字段仍拒绝', () => {
+    const parsed = parseConnectInput({
+      frame: { profiles: [{ id: 'p', spec: SLOT_20 }], members: [] },
+      options: { cornerStrategy: 'miter45' },
+    });
+    assert.equal(parsed.options.cornerStrategy, 'miter45');
+    assert.throws(
+      () => parseConnectInput({ frame: { profiles: [], members: [] }, options: { cornerStrat: 'miter45' } }),
+      /未知字段/,
+    );
+    assert.throws(
+      () => parseConnectInput({ frame: { profiles: [], members: [] }, options: { cornerStrategy: 'nope' } }),
+      /只支持 bracket 与 miter45/,
+    );
+  });
+});

@@ -1,5 +1,5 @@
 import type { FrameModel } from '../frame/model.ts';
-import type { ConnectPlan, ConnectorHole } from '../connect/plan.ts';
+import type { ConnectPlan, ConnectorHole, MiterCut } from '../connect/plan.ts';
 import { circleEntity, dxfDocument, lineEntity, textEntity } from './dxf.ts';
 import { U } from '../geom/units.ts';
 
@@ -33,6 +33,7 @@ export const MEMBER_DXF_PROVENANCE = {
     '不使用 DIMENSION 实体，尺寸以线段加文本近似，CAD 内取值须以文本为准',
     'DXF 内只用 ASCII 标签（M1/M1-H1），杆件原名只出现在返回的 legend 里，避免 R12 中文编码歧义',
     'T 接侧面孔按槽面螺栓近似，实物角件必须复核',
+    '斜切只画切割平面轨迹与长短点尺寸；长点位于哪一侧由装配方向决定，须对照 3D 模型确认',
   ],
   disclaimer:
     '本图是孔位与长度的加工参考图，不是可签收的下厂图纸；投产前必须补齐公差、孔深与工艺，并由工程师确认。',
@@ -138,11 +139,17 @@ export function memberDrawingsToDxf(
   }
 
   const holesByMember = new Map<string, ConnectorHole[]>();
+  const mitersByMember = new Map<string, MiterCut[]>();
   for (const joint of plan.joints) {
     for (const hole of joint.holes) {
       const bucket = holesByMember.get(hole.memberId);
       if (bucket === undefined) holesByMember.set(hole.memberId, [hole]);
       else bucket.push(hole);
+    }
+    for (const cut of joint.miters ?? []) {
+      const bucket = mitersByMember.get(cut.memberId);
+      if (bucket === undefined) mitersByMember.set(cut.memberId, [cut]);
+      else bucket.push(cut);
     }
   }
 
@@ -209,11 +216,45 @@ export function memberDrawingsToDxf(
     entities.push(text('SIDE VIEW', length + 6, sideViewAt, TEXT_H, LAYER_TEXT));
     down = sideViewAt + height + DIM_ROW;
 
+    for (const cut of mitersByMember.get(member.id) ?? []) {
+      const half = (cut.longPointMm - cut.shortPointMm) / 2;
+      const at = cut.end === 'end' ? length : 0;
+      const viewAt = cut.view === 'top' ? topViewAt : sideViewAt;
+      const viewSize = cut.view === 'top' ? width : height;
+      entities.push(
+        lineEntity(at - half, Y(viewAt), at + half, Y(viewAt + viewSize), LAYER_DIM),
+      );
+      entities.push(
+        text(
+          `MITER ${cut.angleDeg} AT ${cut.end.toUpperCase()} LONG=${num(cut.longPointMm)} SHORT=${num(cut.shortPointMm)} VIEW=${cut.view.toUpperCase()}`,
+          0,
+          down,
+          TEXT_H,
+          LAYER_DIM,
+        ),
+      );
+      down += 5;
+    }
+
+    const miters = mitersByMember.get(member.id) ?? [];
+    let stockLength: number = length;
+    for (const cut of miters) stockLength += (cut.longPointMm - cut.shortPointMm) / 2;
+
     entities.push(hLine(0, length, down, LAYER_DIM));
     entities.push(vLine(0, down - 3, down + 3, LAYER_DIM));
     entities.push(vLine(length, down - 3, down + 3, LAYER_DIM));
     down += 4;
-    entities.push(text(`CUT LENGTH ${num(length)} mm`, 0, down, TEXT_H, LAYER_DIM));
+    entities.push(
+      text(
+        miters.length === 0
+          ? `CUT LENGTH ${num(length)} mm`
+          : `CUT LENGTH ${num(stockLength)} mm (STOCK)  CENTERLINE ${num(length)} mm  MITER ALLOWANCE ${num(stockLength - length)} mm`,
+        0,
+        down,
+        TEXT_H,
+        LAYER_DIM,
+      ),
+    );
     down += 5;
     entities.push(text(toleranceNote, 0, down, TEXT_H, LAYER_DIM));
     down += 5;

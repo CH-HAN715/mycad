@@ -154,6 +154,67 @@ describe('mycad memberDxf 钻孔与公差口径', () => {
   });
 });
 
+describe('mycad memberDxf 斜切端头', () => {
+  const miterModel = (): ReturnType<typeof buildFrame> =>
+    buildFrame(
+      parseFrameInput({
+        profiles: [
+          {
+            id: 'p40',
+            spec: {
+              width: 40,
+              height: 40,
+              slot: { opening: 8, depth: 8, headWidth: 12, headStart: 3 },
+              bore: { radius: 5, segments: 16 },
+            },
+          },
+        ],
+        members: [
+          { id: 'A', profileId: 'p40', start: [0, 0, 0], end: [600, 0, 0] },
+          { id: 'B', profileId: 'p40', start: [0, 0, 0], end: [0, 0, 750] },
+        ],
+      }),
+    );
+
+  it('斜切块写入角度与长短点，并画出切割轨迹线', () => {
+    const model = miterModel();
+    const plan = planConnections(model, { cornerStrategy: 'miter45' });
+    const out = memberDrawingsToDxf(model, plan);
+    assert.match(out.dxf, /MITER 45 AT START LONG=620.00 SHORT=580.00 VIEW=SIDE/);
+    assert.match(out.dxf, /MITER 45 AT START LONG=770.00 SHORT=730.00 VIEW=TOP/);
+    assert.match(out.dxf, /CUT LENGTH 620\.00 mm \(STOCK\)\s+CENTERLINE 600\.00 mm\s+MITER ALLOWANCE 20\.00 mm/);
+    assert.match(out.dxf, /CUT LENGTH 770\.00 mm \(STOCK\)\s+CENTERLINE 750\.00 mm\s+MITER ALLOWANCE 20\.00 mm/);
+    const groups: Record<string, string>[] = [];
+    const lines = out.dxf.split('\n');
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (lines[i] !== '0') continue;
+      const kind = lines[i + 1];
+      if (kind !== 'LINE') continue;
+      const g: Record<string, string> = {};
+      let j = i + 2;
+      for (; j < lines.length - 1 && lines[j] !== '0'; j += 2) g[lines[j]!] = lines[j + 1]!;
+      groups.push(g);
+      i = j - 1;
+    }
+    const diagonals = groups.filter(
+      (g) => g['8'] === 'DIM' && Math.abs(+g['11']! - +g['10']!) > 1 && Math.abs(+g['21']! - +g['20']!) > 1,
+    );
+    assert.equal(diagonals.length, 2, '两根杆各一条斜切轨迹线');
+    assert.ok(
+      diagonals.every((g) => Math.abs(+g['11']! - +g['10']!) === 40 && Math.abs(+g['21']! - +g['20']!) === 40),
+      '轨迹线应横跨长短点差 40mm 与视图高 40mm',
+    );
+    assert.equal(out.holeLegend.length, 0);
+  });
+
+  it('provenance 声明长点朝向需对照模型确认', () => {
+    assert.ok(
+      MEMBER_DXF_PROVENANCE.limitations.some((l) => l.includes('长点位于哪一侧')),
+      '斜切边界必须写进 limitations',
+    );
+  });
+});
+
 describe('mycad memberDxf 图纸文件', () => {
   it('R12 头、毫米单位与 EOF 齐全，实体计数与 stats 一致', () => {
     const model = exampleFrame();
