@@ -43,6 +43,22 @@ export interface ConnectRules {
   readonly drillTableSource: string;
   /** 图纸上的一般公差注记（ASCII，进 DXF）；量级类比公开资料，不是符合性声明。 */
   readonly generalToleranceNote: string;
+  /** 长度公差，mm：中心线长不超过 tolLengthThresholdMm 时使用。 */
+  readonly tolLengthShortMm: number;
+  /** 长度公差，mm：超过阈值时使用（长杆累积误差更大）。 */
+  readonly tolLengthLongMm: number;
+  /** 长度公差的档位阈值，mm；等于阈值算短档。 */
+  readonly tolLengthThresholdMm: number;
+  /** 孔位公差，mm。 */
+  readonly tolHolePositionMm: number;
+  /** 孔深公差，mm。 */
+  readonly tolHoleDepthMm: number;
+  /** 端头角度公差，deg。 */
+  readonly tolAngleDeg: number;
+  /** 攻丝精度等级注记（来源为公开工艺页，非本引擎实测）。 */
+  readonly threadClass: string;
+  /** 上述公差数值的来源标注，必须出现在输出里。 */
+  readonly toleranceSource: string;
   /** 整套默认值的来源标签，必须出现在输出里。 */
   readonly source: string;
 }
@@ -70,6 +86,16 @@ export const DEFAULT_CONNECT_RULES: ConnectRules = {
     'ISO 273 medium series clearance holes / metric coarse tap drills, public tables, checked 2026-11-06; standard text not purchased, not a conformity claim',
   generalToleranceNote:
     'GENERAL TOL +/-0.3 mm (ENGINEERING PRACTICE, MAGNITUDE ANALOGOUS TO PUBLIC ISO 2768-m TABLE; NOT A CONFORMITY CLAIM)',
+  // 数值取自嘉立创FA 铝型材加工公开工艺参数页（核对于 2026-11-06），是厂商公布的加工能力，非规范条文。
+  tolLengthShortMm: 0.3,
+  tolLengthLongMm: 0.5,
+  tolLengthThresholdMm: 1000,
+  tolHolePositionMm: 0.2,
+  tolHoleDepthMm: 0.2,
+  tolAngleDeg: 0.2,
+  threadClass: '6H',
+  toleranceSource:
+    'JLCFA public aluminum-extrusion process sheet, checked 2026-11-06 (vendor capability figures, not a standard clause)',
   source: '工程惯例（欧标型材公开资料归纳），非规范条文；可整表覆盖',
 } as const;
 
@@ -123,6 +149,12 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     'pegMinEngagementMm',
     'bracketLegThicknessMm',
     'nutWasherAllowanceMm',
+    'tolLengthShortMm',
+    'tolLengthLongMm',
+    'tolLengthThresholdMm',
+    'tolHolePositionMm',
+    'tolHoleDepthMm',
+    'tolAngleDeg',
   ] as const;
   for (const key of numericKeys) {
     if (raw[key] !== undefined) out[key] = readNumberField(raw, key, 'rules', [...numericKeys, 'fastenerSeries', 'source']);
@@ -160,7 +192,7 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     out['source'] = raw['source'];
   }
 
-  const stringKeys = ['source', 'drillTableSource', 'generalToleranceNote'] as const;
+  const stringKeys = ['source', 'drillTableSource', 'generalToleranceNote', 'toleranceSource', 'threadClass'] as const;
   for (const key of stringKeys) {
     if (raw[key] !== undefined) {
       const value = raw[key];

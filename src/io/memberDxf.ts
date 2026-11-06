@@ -1,5 +1,6 @@
 import type { FrameModel } from '../frame/model.ts';
 import type { ConnectPlan, ConnectorHole, MiterCut } from '../connect/plan.ts';
+import type { ConnectRules } from '../connect/rules.ts';
 import { circleEntity, dxfDocument, lineEntity, textEntity } from './dxf.ts';
 import { U } from '../geom/units.ts';
 
@@ -91,6 +92,11 @@ export interface MemberDrawingResult {
   };
 }
 
+/** 长度公差按阈值分档；等于阈值算短档（与来源页的 L<=1000 口径一致）。 */
+function tolLength(valueMm: number, rules: ConnectRules): number {
+  return valueMm <= rules.tolLengthThresholdMm ? rules.tolLengthShortMm : rules.tolLengthLongMm;
+}
+
 /** DXF 正文必须是 ASCII：用户覆盖的注记含中文时降级并告警，不写进图。 */
 function asciiOnly(value: string): string {
   return value.replace(/[^\x20-\x7E]/g, '');
@@ -131,6 +137,7 @@ export function memberDrawingsToDxf(
   }
   const rawNote = plan.rules.generalToleranceNote;
   const rawDrill = plan.rules.drillTableSource;
+  const rules = plan.rules;
   const toleranceNote = asciiOnly(rawNote) || 'GENERAL TOL NOT STATED (SEE LEGEND)';
   const drillSource = asciiOnly(rawDrill) || 'DRILL TABLE OVERRIDDEN (SOURCE NON-ASCII, SEE LEGEND)';
   const warnings: string[] = [];
@@ -226,7 +233,7 @@ export function memberDrawingsToDxf(
       );
       entities.push(
         text(
-          `MITER ${cut.angleDeg} AT ${cut.end.toUpperCase()} LONG=${num(cut.longPointMm)} SHORT=${num(cut.shortPointMm)} VIEW=${cut.view.toUpperCase()}`,
+          `MITER ${cut.angleDeg} +/-${rules.tolAngleDeg.toFixed(1)} AT ${cut.end.toUpperCase()} LONG=${num(cut.longPointMm)} SHORT=${num(cut.shortPointMm)} VIEW=${cut.view.toUpperCase()}`,
           0,
           down,
           TEXT_H,
@@ -247,8 +254,8 @@ export function memberDrawingsToDxf(
     entities.push(
       text(
         miters.length === 0
-          ? `CUT LENGTH ${num(length)} mm`
-          : `CUT LENGTH ${num(stockLength)} mm (STOCK)  CENTERLINE ${num(length)} mm  MITER ALLOWANCE ${num(stockLength - length)} mm`,
+          ? `CUT LENGTH ${num(length)} mm +/-${tolLength(stockLength, rules).toFixed(2)}`
+          : `CUT LENGTH ${num(stockLength)} mm +/-${tolLength(stockLength, rules).toFixed(2)} (STOCK)  CENTERLINE ${num(length)} mm  MITER ALLOWANCE ${num(stockLength - length)} mm`,
         0,
         down,
         TEXT_H,
@@ -259,10 +266,20 @@ export function memberDrawingsToDxf(
     entities.push(text(toleranceNote, 0, down, TEXT_H, LAYER_DIM));
     down += 5;
     entities.push(text(`DRILL TABLE: ${drillSource}`, 0, down, TEXT_H, LAYER_DIM));
+    down += 5;
+    entities.push(
+      text(
+        `TOL: LENGTH +/-${tolLength(stockLength, rules).toFixed(2)}  HOLE POS +/-${rules.tolHolePositionMm.toFixed(2)}  DEPTH +/-${rules.tolHoleDepthMm.toFixed(2)}  ANGLE +/-${rules.tolAngleDeg.toFixed(1)}  THREAD ${asciiOnly(rules.threadClass) || 'UNSPECIFIED'}  SRC: ${asciiOnly(rules.toleranceSource) || 'NOT STATED'}`,
+        0,
+        down,
+        TEXT_H,
+        LAYER_DIM,
+      ),
+    );
     down += TABLE_HEAD;
 
     entities.push(
-      text('HOLE     FACE     X(mm)      DIA   DRILL  DEPTH   SERIES  AXIS', 0, down, TEXT_H, LAYER_TEXT),
+      text('HOLE     FACE     X(mm)      DIA   DRILL  DEPTH   SERIES  AXIS   POS-TOL', 0, down, TEXT_H, LAYER_TEXT),
     );
     down += TABLE_ROW;
 
@@ -293,7 +310,7 @@ export function memberDrawingsToDxf(
       const depthCell = hole.depthMm === null ? 'THRU' : hole.depthMm.toFixed(1);
       entities.push(
         text(
-          `${holeLabel.padEnd(8)} ${hole.face.toUpperCase().padEnd(8)} ${num(along).padStart(8)}  ${num(hole.diameterMm).padStart(5)}  ${drillCell.padStart(5)}  ${depthCell.padStart(6)}  ${hole.boltSeries.padEnd(6)} ${hole.boltAxis.toUpperCase()}`,
+          `${holeLabel.padEnd(8)} ${hole.face.toUpperCase().padEnd(8)} ${num(along).padStart(8)}  ${num(hole.diameterMm).padStart(5)}  ${drillCell.padStart(5)}  ${depthCell.padStart(6)}  ${hole.boltSeries.padEnd(6)} ${hole.boltAxis.toUpperCase().padEnd(5)} +/-${rules.tolHolePositionMm.toFixed(2)}`,
           0,
           down,
           TEXT_H,

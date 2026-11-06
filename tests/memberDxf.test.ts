@@ -180,10 +180,13 @@ describe('mycad memberDxf 斜切端头', () => {
     const model = miterModel();
     const plan = planConnections(model, { cornerStrategy: 'miter45' });
     const out = memberDrawingsToDxf(model, plan);
-    assert.match(out.dxf, /MITER 45 AT START LONG=620.00 SHORT=580.00 VIEW=SIDE/);
-    assert.match(out.dxf, /MITER 45 AT START LONG=770.00 SHORT=730.00 VIEW=TOP/);
-    assert.match(out.dxf, /CUT LENGTH 620\.00 mm \(STOCK\)\s+CENTERLINE 600\.00 mm\s+MITER ALLOWANCE 20\.00 mm/);
-    assert.match(out.dxf, /CUT LENGTH 770\.00 mm \(STOCK\)\s+CENTERLINE 750\.00 mm\s+MITER ALLOWANCE 20\.00 mm/);
+    assert.match(out.dxf, /MITER 45 \+\/-0\.2 AT START LONG=620\.00 SHORT=580\.00 VIEW=SIDE/);
+    assert.match(out.dxf, /MITER 45 \+\/-0\.2 AT START LONG=770\.00 SHORT=730\.00 VIEW=TOP/);
+    assert.match(
+      out.dxf,
+      /CUT LENGTH 620\.00 mm \+\/-0\.30 \(STOCK\)\s+CENTERLINE 600\.00 mm\s+MITER ALLOWANCE 20\.00 mm/,
+    );
+    assert.match(out.dxf, /TOL: LENGTH \+\/-0\.30\s+HOLE POS \+\/-0\.20\s+DEPTH \+\/-0\.20\s+ANGLE \+\/-0\.2\s+THREAD 6H\s+SRC: JLCFA/);
     const groups: Record<string, string>[] = [];
     const lines = out.dxf.split('\n');
     for (let i = 0; i < lines.length - 1; i++) {
@@ -212,6 +215,37 @@ describe('mycad memberDxf 斜切端头', () => {
       MEMBER_DXF_PROVENANCE.limitations.some((l) => l.includes('长点位于哪一侧')),
       '斜切边界必须写进 limitations',
     );
+  });
+});
+
+describe('mycad memberDxf 长度公差分档', () => {
+  const beamOf = (length: number) =>
+    buildFrame(
+      parseFrameInput({
+        profiles: [P20],
+        members: [{ id: '梁', profileId: 'p20', start: [0, 0, 0], end: [length, 0, 0] }],
+      }),
+    );
+
+  it('1000mm 及以下走短档 ±0.3，超过走 ±0.5（阈值算短档）', () => {
+    const atThreshold = memberDrawingsToDxf(beamOf(1000), planConnections(beamOf(1000)));
+    assert.match(atThreshold.dxf, /CUT LENGTH 1000\.00 mm \+\/-0\.30/);
+    const beyond = memberDrawingsToDxf(beamOf(1200), planConnections(beamOf(1200)));
+    assert.match(beyond.dxf, /CUT LENGTH 1200\.00 mm \+\/-0\.50/);
+    assert.match(beyond.dxf, /TOL: LENGTH \+\/-0\.50/);
+  });
+
+  it('孔位表每行都带 POS-TOL，且数值随规则覆盖变化', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.dxf, /POS-TOL/);
+    assert.match(out.dxf, /M1-H1\s+LEFT\s+15\.00.*\+\/-0\.20/);
+    const overridden = memberDrawingsToDxf(
+      model,
+      planConnections(model, { rules: { tolHolePositionMm: 0.1, toleranceSource: 'shop measured' } }),
+    );
+    assert.match(overridden.dxf, /HOLE POS \+\/-0\.10/);
+    assert.match(overridden.dxf, /SRC: shop measured/);
   });
 });
 
