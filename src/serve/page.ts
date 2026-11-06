@@ -212,7 +212,7 @@ function memberBox(model, member, color) {
   const geo = new THREE.BoxGeometry(cut, h, w);
   const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.55, metalness: 0.25 });
   const mesh = new THREE.Mesh(geo, mat);
-  const mid = new THREE.Vector3(s.x, s.y, s.z).addScaledVector(dir, (member.trimStart + member.cutLength / 2) / 1000);
+  const mid = new THREE.Vector3(s.x / 1000, s.y / 1000, s.z / 1000).addScaledVector(dir, (member.trimStart + member.cutLength / 2) / 1000);
   mesh.position.copy(mid);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
   return mesh;
@@ -237,13 +237,15 @@ window.render3d = async function render3d() {
       sp.position.set(jt.point.x / 1000, jt.point.y / 1000, jt.point.z / 1000);
       root.add(sp);
     }
+    root.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(root);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     target.copy(center);
-    radius = Math.max(0.6, size.length() * 1.4);
+    radius = Math.max(0.8, size.length() * 1.4);
     info.textContent = model.members.length + ' 根杆件、' + model.joints.length + ' 个关节已渲染（包围盒 ' +
-      Math.round(size.x * 1000) + '×' + Math.round(size.y * 1000) + '×' + Math.round(size.z * 1000) + ' mm）';
+      Math.round(size.x * 1000) + '×' + Math.round(size.y * 1000) + '×' + Math.round(size.z * 1000) + ' mm，视口 ' +
+      viewer.clientWidth + '×' + viewer.clientHeight + 'px）';
   } catch (e) { errEl.textContent = String(e); }
 };
 </script>
