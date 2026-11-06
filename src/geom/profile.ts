@@ -1,5 +1,6 @@
 import type { Vec2 } from './polygon.ts';
 import { GeometryInputError, v2 } from './polygon.ts';
+import { SCHEMA_VERSION, schemaVersionProblem } from './schema.ts';
 
 /**
  * L1 截面参数化 DSL：用工程尺寸描述一根铝型材的横截面，生成有向多边形。
@@ -221,7 +222,11 @@ function assertKnownKeys(record: Record<string, unknown>, allowed: readonly stri
  */
 export function parseProfileSpec(raw: unknown): ProfileSpec {
   if (!isRecord(raw)) fail('型材规格必须是 JSON 对象', '形如 {"width":20,"height":20,"slot":{...}}');
-  assertKnownKeys(raw, ['width', 'height', 'slot', 'slotFaces', 'bore'], '型材规格');
+  assertKnownKeys(raw, ['schemaVersion', 'width', 'height', 'slot', 'slotFaces', 'bore'], '型材规格');
+  const versionProblem = schemaVersionProblem(raw['schemaVersion']);
+  if (versionProblem !== null) {
+    fail(`型材规格 ${versionProblem}`, `缺省即视为 v${SCHEMA_VERSION}，可不写该字段`);
+  }
 
   const width = readNumber(raw, 'width', '型材规格');
   const height = readNumber(raw, 'height', '型材规格');

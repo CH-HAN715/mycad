@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { GeometryInputError } from '../geom/polygon.ts';
 import { buildProfile, parseProfileSpec } from '../geom/profile.ts';
+import { unknownKeyProblem } from '../geom/schema.ts';
 import { PROFILE_PRESETS, findProfilePreset } from '../geom/presets.ts';
 import { sectionProperties } from '../geom/inertia.ts';
 import { sectionToDxf } from '../io/dxf.ts';
@@ -146,6 +147,8 @@ async function handleApi(path: string, body: string, res: ServerResponse): Promi
     let cutOptions: CutOptions | undefined;
     if (typeof optionsRaw === 'object' && optionsRaw !== null) {
       const o = optionsRaw as Record<string, unknown>;
+      const problem = unknownKeyProblem(o, ['stockMm', 'kerfMm']);
+      if (problem !== null) throw new ServeError('E_SHAPE', `bom options ${problem}`, '允许的字段：stockMm、kerfMm');
       const hasStock = typeof o['stockMm'] === 'number';
       const hasKerf = typeof o['kerfMm'] === 'number';
       if (hasStock !== hasKerf) {
@@ -168,6 +171,14 @@ async function handleApi(path: string, body: string, res: ServerResponse): Promi
     if (!Array.isArray(pieces) || typeof optionsRaw !== 'object' || optionsRaw === null) {
       throw new ServeError('E_SHAPE', '需要 pieces 数组与 options 对象', '{"pieces":[{"id":"a","lengthMm":600,"quantity":2}],"options":{"stockLengthMm":6000,"kerfMm":3}}');
     }
+    const cutProblem = unknownKeyProblem(optionsRaw as Record<string, unknown>, [
+      'stockLengthMm',
+      'kerfMm',
+      'maxPieces',
+    ]);
+    if (cutProblem !== null) {
+      throw new ServeError('E_SHAPE', `cut options ${cutProblem}`, '允许的字段：stockLengthMm、kerfMm、maxPieces');
+    }
     const options = optionsRaw as unknown as CutOptions;
     sendJson(res, 200, { ok: true, plan: planCuts(pieces as CutPieceInput[], options) });
     return;
@@ -176,6 +187,15 @@ async function handleApi(path: string, body: string, res: ServerResponse): Promi
     const input = bodyRecord(body);
     const { outer, holes } = sectionGeometry(sectionSource(input));
     const circlesRaw = input['circles'];
+    if (Array.isArray(circlesRaw)) {
+      for (const [i, circle] of circlesRaw.entries()) {
+        if (typeof circle !== 'object' || circle === null) {
+          throw new ServeError('E_SHAPE', `circles[${i}] 必须是对象`, '形如 {"center":[x,y],"diameter":6.5}');
+        }
+        const problem = unknownKeyProblem(circle as Record<string, unknown>, ['center', 'diameter']);
+        if (problem !== null) throw new ServeError('E_SHAPE', `circles[${i}] ${problem}`, '允许的字段：center、diameter');
+      }
+    }
     const circles = (Array.isArray(circlesRaw) ? circlesRaw : []) as CircleSpec[];
     const text = sectionToDxf(outer, holes, circles.length > 0 ? { circles } : {});
     sendText(res, 200, text, 'application/dxf', 'section.dxf');

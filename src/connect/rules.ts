@@ -7,6 +7,8 @@
  * 本表不含任何厂商零件号。
  */
 
+import { schemaVersionProblem } from '../geom/schema.ts';
+
 export interface FastenerSeriesRule {
   /** 槽口宽下限（含），mm。 */
   readonly openingMinMm: number;
@@ -110,6 +112,8 @@ function readNumberField(record: Record<string, unknown>, key: string, where: st
  */
 export function parseRulesOverride(raw: unknown): ConnectRules {
   if (!isRecord(raw)) throw new Error('rules 必须是 JSON 对象');
+  const versionProblem = schemaVersionProblem(raw['schemaVersion']);
+  if (versionProblem !== null) throw new Error(`rules ${versionProblem}`);
   const out: Record<string, unknown> = { ...DEFAULT_CONNECT_RULES };
 
   const numericKeys = [
@@ -185,9 +189,10 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
   }
 
   for (const key of Object.keys(raw)) {
+    if (key === 'schemaVersion') continue;
     if (![...numericKeys, ...stringKeys, ...drillTables, 'fastenerSeries'].includes(key)) {
       throw new Error(
-        `rules 含未知字段：${key}；允许：${[...numericKeys, ...stringKeys, ...drillTables, 'fastenerSeries'].join('、')}`,
+        `rules 含未知字段：${key}；允许：${['schemaVersion', ...numericKeys, ...stringKeys, ...drillTables, 'fastenerSeries'].join('、')}`,
       );
     }
   }

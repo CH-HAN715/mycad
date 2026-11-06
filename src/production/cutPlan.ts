@@ -1,4 +1,5 @@
 import { TOL } from '../geom/tolerance.ts';
+import { unknownKeyProblem } from '../geom/schema.ts';
 
 /**
  * L5 生产层：一维定尺下料。
@@ -115,6 +116,14 @@ function expandPieces(
   const ids = new Set<string>();
   const expanded: PlacedPiece[] = [];
   for (const piece of pieces) {
+    const pieceProblem = unknownKeyProblem(piece as unknown as Record<string, unknown>, [
+      'id',
+      'lengthMm',
+      'quantity',
+    ]);
+    if (pieceProblem !== null) {
+      fail(`段定义 ${pieceProblem}`, '允许的字段：id、lengthMm、quantity', 'invalid_input');
+    }
     if (typeof piece.id !== 'string' || piece.id.trim().length === 0) {
       fail('段 id 必须是非空字符串', 'id 用于在方案中定位每一段', 'invalid_input');
     }
