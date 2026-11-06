@@ -45,7 +45,7 @@ describe('mycad serve', () => {
     const r = await fetch(`${base}/api/presets`);
     const j = (await r.json()) as { ok: boolean; presets: { id: string }[] };
     assert.equal(j.ok, true);
-    assert.deepEqual(j.presets.map((p) => p.id), ['eu2020', 'eu4040']);
+    assert.deepEqual(j.presets.map((p) => p.id), ['eu2020', 'eu3030', 'eu4545', 'eu6060', 'eu4040']);
   });
 
   it('POST /api/section 预设口径与 CLI 同源', async () => {

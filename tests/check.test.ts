@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { CheckError, parseCheckInput, runCheck, sectionFromProfile } from '../src/check/beam.ts';
 import { U } from '../src/geom/units.ts';
 import { SYN_2020_SPEC } from '../src/verify/fixtures.ts';
+import { findProfilePreset } from '../src/geom/presets.ts';
 import { BEAM_VERIFY_CASES, compareBeamCase } from '../src/verify/beamFixtures.ts';
 
 describe('L6 手算对照算例（AGENTS.md 十一.5）', () => {
@@ -133,5 +134,33 @@ describe('L6 输入解析', () => {
       () => runCheck(parseCheckInput({ ...ssPoint, eSource: '   ' })),
       (e: unknown) => e instanceof CheckError && e.reason === 'missing_source',
     );
+  });
+});
+
+describe('预设截面的保守取值（安全护栏）', () => {
+  it('eu6060 走 profile 入口时取厂家公布 Ix，而不是偏大 3 倍的计算值', () => {
+    const preset = findProfilePreset('eu6060')!;
+    const section = sectionFromProfile(preset.spec, 'x');
+    assert.equal(section.iMm4, 292000);
+    assert.ok(section.iMm4 < 400000, '计算值 837428 不得成为校核输入');
+    assert.match(section.bendingNote, /较小者/);
+    assert.match(section.bendingNote, /米思米/);
+  });
+
+  it('eu2020 同样取公布值 7200 而非计算值 8847', () => {
+    const preset = findProfilePreset('eu2020')!;
+    assert.equal(sectionFromProfile(preset.spec, 'x').iMm4, 7200);
+  });
+
+  it('不在预设表里的自定义截面仍走计算值，不假装保守', () => {
+    const custom = { width: 25, height: 25, slot: { opening: 6.15, depth: 4.5, headWidth: 9, headStart: 2 }, bore: { radius: 2.5 } };
+    const section = sectionFromProfile(custom, 'x', 'A/I/W 由 L2 参数化截面自算');
+    assert.match(section.bendingNote, /L2 参数化截面自算/);
+    assert.equal(section.iMm4, sectionFromProfile(custom, 'x').iMm4);
+  });
+
+  it('与预设完全同参数的自定义 spec 会被识别并替换（口径一致优先）', () => {
+    const clone = structuredClone(findProfilePreset('eu4545')!.spec);
+    assert.equal(sectionFromProfile(clone, 'x').iMm4, 151200);
   });
 });

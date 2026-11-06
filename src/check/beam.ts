@@ -1,6 +1,7 @@
 import type { ProfileSpec } from '../geom/profile.ts';
 import { buildProfile, parseProfileSpec } from '../geom/profile.ts';
 import { sectionProperties } from '../geom/inertia.ts';
+import { PROFILE_PRESETS } from '../geom/presets.ts';
 import type { Mm, Mm2, Mm3, Mm4, MPa, N } from '../geom/units.ts';
 import { U } from '../geom/units.ts';
 
@@ -312,9 +313,58 @@ export function runCheck(input: CheckInput): CheckResult {
 }
 
 /** 由参数化截面直接取校核需要的 A/I/W（保守取双边缘模量的较小者）。 */
+/** 按 spec 精确匹配内置预设；命中且带厂家公布值时返回保守截面值。 */
+function publishedSectionOf(
+  spec: ProfileSpec,
+  axis: 'x' | 'y',
+): { readonly iMm4: number; readonly wMm3: number; readonly areaMm2: number; readonly sourceTitle: string } | null {
+  for (const preset of PROFILE_PRESETS) {
+    const ref = preset.reference;
+    if (ref === undefined || ref.ixMm4 === undefined || ref.zxMm3 === undefined) continue;
+    const a = preset.spec;
+    const sameSlot =
+      (a.slot === undefined) === (spec.slot === undefined) &&
+      (a.slot === undefined ||
+        (a.slot.opening === spec.slot?.opening &&
+          a.slot.depth === spec.slot?.depth &&
+          a.slot.headWidth === spec.slot?.headWidth &&
+          a.slot.headStart === spec.slot?.headStart));
+    const sameBore =
+      (a.bore === undefined) === (spec.bore === undefined) &&
+      (a.bore === undefined || a.bore.radius === spec.bore?.radius);
+    if (a.width !== spec.width || a.height !== spec.height || !sameSlot || !sameBore) continue;
+    return {
+      iMm4: axis === 'x' ? ref.ixMm4 : ref.iyMm4 ?? ref.ixMm4,
+      wMm3: axis === 'x' ? ref.zxMm3 : ref.zyMm3 ?? ref.zxMm3,
+      areaMm2: ref.massPerMeterKg === undefined ? Number.POSITIVE_INFINITY : (ref.massPerMeterKg / 2.7e-3),
+      sourceTitle: `${ref.sourceTitle}（核对 ${ref.checkedAt}）`,
+    };
+  }
+  return null;
+}
+
 export function sectionFromProfile(spec: ProfileSpec, axis: 'x' | 'y', slotRole?: string): CheckSection {
   const geometry = buildProfile(spec);
   const props = sectionProperties(geometry.outer, geometry.holes);
+  const published = publishedSectionOf(spec, axis);
+  if (published !== null) {
+    // 直角理想化不含内腔，大截面算出的 I 会显著偏大（偏乐观）；有厂家公布值时取两者较小值。
+    const iMm4 = Math.min(axis === 'x' ? props.ix : props.iy, published.iMm4);
+    const wMm3 = Math.min(
+      axis === 'x'
+        ? U.mm3(Math.min(props.modulus.wxTop, props.modulus.wxBottom))
+        : U.mm3(Math.min(props.modulus.wyLeft, props.modulus.wyRight)),
+      published.wMm3,
+    );
+    return {
+      areaMm2: U.mm2(Math.min(props.area, published.areaMm2)),
+      iMm4: U.mm4(iMm4),
+      wMm3: U.mm3(wMm3),
+      bendingNote:
+        `绕 ${axis} 轴弯曲：A/I/W 取「理想化计算值」与「厂家公布值」的较小者（保守方向）；` +
+        `计算值 I=${(axis === 'x' ? props.ix : props.iy).toFixed(0)}mm⁴，公布值 I=${published.iMm4}mm⁴；来源：${published.sourceTitle}`,
+    };
+  }
   if (axis === 'x') {
     return {
       areaMm2: props.area,

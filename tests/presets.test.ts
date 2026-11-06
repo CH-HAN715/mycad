@@ -43,7 +43,7 @@ describe('型材预设数据', () => {
 
   it('未知 id 查找返回 undefined', () => {
     assert.equal(findProfilePreset('nope'), undefined);
-    assert.deepEqual(presetIds(), ['eu2020', 'eu4040']);
+    assert.deepEqual(presetIds(), ['eu2020', 'eu3030', 'eu4545', 'eu6060', 'eu4040']);
   });
 });
 
@@ -53,7 +53,7 @@ describe('mycad presets / --preset-profile', () => {
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout) as { ok: boolean; presets: { id: string; unverifiedFields: string[] }[] };
     assert.equal(payload.ok, true);
-    assert.deepEqual(payload.presets.map((p) => p.id), ['eu2020', 'eu4040']);
+    assert.deepEqual(payload.presets.map((p) => p.id), ['eu2020', 'eu3030', 'eu4545', 'eu6060', 'eu4040']);
   });
 
   it('section --preset-profile eu2020 附带 profilePreset 与厂家值', () => {
