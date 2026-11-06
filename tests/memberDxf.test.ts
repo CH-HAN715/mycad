@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { buildFrame, parseFrameInput } from '../src/frame/model.ts';
 import { planConnections } from '../src/connect/plan.ts';
 import type { ConnectPlan } from '../src/connect/plan.ts';
+import { DEFAULT_CONNECT_RULES } from '../src/connect/rules.ts';
 import { MEMBER_DXF_PROVENANCE, memberDrawingsToDxf } from '../src/io/memberDxf.ts';
 
 const P20 = {
@@ -94,15 +95,62 @@ describe('mycad memberDxf 孔位基准', () => {
               boltAxis: 'y',
               boltSeries: 'M5',
               diameterMm: 5,
+              clearanceDrillMm: 5.5,
+              tapDrillMm: 4.2,
+              depthMm: null,
             },
           ],
         },
       ],
+      rules: DEFAULT_CONNECT_RULES,
     } as unknown as ConnectPlan;
     const out = memberDrawingsToDxf(model, fake);
     assert.equal(out.holeLegend[0]!.inBar, false);
     assert.equal(out.stats.circles, 0);
     assert.match(out.warnings.join('\n'), /超出杆身/);
+  });
+});
+
+describe('mycad memberDxf 钻孔与公差口径', () => {
+  it('M5 通光孔按 ISO 273 中系列给 5.5，攻丝底孔 4.2，深度按通孔', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    const m5 = out.holeLegend.filter((h) => h.boltSeries === 'M5');
+    assert.ok(m5.length > 0);
+    assert.ok(m5.every((h) => h.clearanceDrillMm === 5.5));
+    assert.ok(m5.every((h) => h.tapDrillMm === 4.2));
+    assert.ok(m5.every((h) => h.depthMm === null));
+    assert.match(out.dxf, /DRILL/);
+    assert.match(out.dxf, /THRU/);
+  });
+
+  it('一般公差注记进图纸正文且来源随规则覆盖变化', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.toleranceNote, /ISO 2768/);
+    assert.match(out.toleranceNote, /NOT A CONFORMITY CLAIM/);
+    assert.ok(out.dxf.includes(out.toleranceNote));
+    assert.match(out.drillSource, /ISO 273/);
+  });
+
+  it('覆盖钻孔表会同时改变图面与来源口径', () => {
+    const model = exampleFrame();
+    const plan = planConnections(model, {
+      rules: { clearanceDrillBySeries: { M5: 5.3 }, drillTableSource: '用户实物复核值' },
+    });
+    const out = memberDrawingsToDxf(model, plan);
+    assert.ok(out.holeLegend.every((h) => h.clearanceDrillMm === 5.3));
+    assert.match(out.drillSource, /NON-ASCII/);
+    assert.ok(out.dxf.includes('DRILL TABLE OVERRIDDEN'));
+    assert.match(out.warnings.join('\n'), /非 ASCII/);
+  });
+
+  it('未知规则字段仍然直接拒绝', () => {
+    const model = exampleFrame();
+    assert.throws(
+      () => planConnections(model, { rules: { clearanceDrillBySeriesWrong: { M5: 5 } } }),
+      /未知字段/,
+    );
   });
 });
 

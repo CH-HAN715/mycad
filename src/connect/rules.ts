@@ -33,6 +33,14 @@ export interface ConnectRules {
   readonly bracketLegThicknessMm: number;
   /** 螺母+垫圈余量（用于螺栓长度建议），mm。 */
   readonly nutWasherAllowanceMm: number;
+  /** 通光孔钻孔直径（按螺栓系列），mm；来源见 drillTableSource。 */
+  readonly clearanceDrillBySeries: Readonly<Record<string, number>>;
+  /** 攻丝底孔直径（按螺栓系列），mm；仅当工艺选择攻丝时使用。 */
+  readonly tapDrillBySeries: Readonly<Record<string, number>>;
+  /** 钻孔直径表的来源标注，必须出现在输出里。 */
+  readonly drillTableSource: string;
+  /** 图纸上的一般公差注记（ASCII，进 DXF）；量级类比公开资料，不是符合性声明。 */
+  readonly generalToleranceNote: string;
   /** 整套默认值的来源标签，必须出现在输出里。 */
   readonly source: string;
 }
@@ -53,6 +61,13 @@ export const DEFAULT_CONNECT_RULES: ConnectRules = {
   pegMinEngagementMm: 20,
   bracketLegThicknessMm: 4,
   nutWasherAllowanceMm: 5,
+  // ISO 273 中系列通光孔与公制粗牙攻丝底孔的公开数值表（核对于 2026-11-06，来源见 drillTableSource）。
+  clearanceDrillBySeries: { M5: 5.5, M6: 6.6, M8: 9, M10: 11 },
+  tapDrillBySeries: { M5: 4.2, M6: 5, M8: 6.8, M10: 8.5 },
+  drillTableSource:
+    'ISO 273 medium series clearance holes / metric coarse tap drills, public tables, checked 2026-11-06; standard text not purchased, not a conformity claim',
+  generalToleranceNote:
+    'GENERAL TOL +/-0.3 mm (ENGINEERING PRACTICE, MAGNITUDE ANALOGOUS TO PUBLIC ISO 2768-m TABLE; NOT A CONFORMITY CLAIM)',
   source: '工程惯例（欧标型材公开资料归纳），非规范条文；可整表覆盖',
 } as const;
 
@@ -141,9 +156,39 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     out['source'] = raw['source'];
   }
 
+  const stringKeys = ['source', 'drillTableSource', 'generalToleranceNote'] as const;
+  for (const key of stringKeys) {
+    if (raw[key] !== undefined) {
+      const value = raw[key];
+      if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(`rules.${key} 必须是非空字符串（默认参数与注记不得静默生效）`);
+      }
+      out[key] = value;
+    }
+  }
+
+  const drillTables = ['clearanceDrillBySeries', 'tapDrillBySeries'] as const;
+  for (const key of drillTables) {
+    if (raw[key] === undefined) continue;
+    const table = raw[key];
+    if (!isRecord(table) || Object.keys(table).length === 0) {
+      throw new Error(`rules.${key} 必须是非空对象，形如 {"M5":5.5}`);
+    }
+    const parsed: Record<string, number> = {};
+    for (const [series, value] of Object.entries(table)) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || !(value > 0)) {
+        throw new Error(`rules.${key}.${series} 必须是正的有限数，收到 ${JSON.stringify(value)}`);
+      }
+      parsed[series] = value;
+    }
+    out[key] = parsed;
+  }
+
   for (const key of Object.keys(raw)) {
-    if (![...numericKeys, 'fastenerSeries', 'source'].includes(key)) {
-      throw new Error(`rules 含未知字段：${key}；允许：${[...numericKeys, 'fastenerSeries', 'source'].join('、')}`);
+    if (![...numericKeys, ...stringKeys, ...drillTables, 'fastenerSeries'].includes(key)) {
+      throw new Error(
+        `rules 含未知字段：${key}；允许：${[...numericKeys, ...stringKeys, ...drillTables, 'fastenerSeries'].join('、')}`,
+      );
     }
   }
 

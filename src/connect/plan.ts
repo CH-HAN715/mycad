@@ -75,6 +75,12 @@ export interface ConnectorHole {
   readonly boltSeries: string;
   /** 公称直径，mm；无法从系列解析时为 null。 */
   readonly diameterMm: number | null;
+  /** 通光孔钻孔直径，mm（ISO 273 中系列公开表）；系列不在表内为 null。 */
+  readonly clearanceDrillMm: number | null;
+  /** 攻丝底孔直径，mm；仅当工艺选择攻丝时使用。 */
+  readonly tapDrillMm: number | null;
+  /** 孔深，mm；null 表示按通孔输出（一期不做盲孔）。 */
+  readonly depthMm: number | null;
 }
 
 export interface HardwareItem {
@@ -138,6 +144,17 @@ export const CONNECT_PROVENANCE = {
 function boltDiameterOf(series: string): number | null {
   const m = /^M(\d+(?:\.\d+)?)$/.exec(series.trim());
   return m === null ? null : Number(m[1]);
+}
+
+/** 钻孔直径按系列查规则表；不在表内返回 null，由图纸显式标 UNKNOWN，不猜值。 */
+function drillDiametersOf(
+  series: string,
+  rules: ConnectRules,
+): { readonly clearance: number | null; readonly tap: number | null } {
+  return {
+    clearance: rules.clearanceDrillBySeries[series] ?? null,
+    tap: rules.tapDrillBySeries[series] ?? null,
+  };
 }
 
 interface MemberContext {
@@ -214,6 +231,7 @@ function pushEndHoles(
   rules: ConnectRules,
 ): void {
   const diameter = boltDiameterOf(series);
+  const drill = drillDiametersOf(series, rules);
   const local = localPositionOf(face, ctx.profile.spec);
   for (let k = 0; k < count; k++) {
     holes.push({
@@ -227,6 +245,9 @@ function pushEndHoles(
       boltAxis,
       boltSeries: series,
       diameterMm: diameter,
+      clearanceDrillMm: drill.clearance,
+      tapDrillMm: drill.tap,
+      depthMm: null,
     });
   }
 }
@@ -295,6 +316,7 @@ function planBracketJoint(
       const along = coordOf(point, otherCtx.member.axis) -
         Math.min(coordOf(otherCtx.member.start, otherCtx.member.axis), coordOf(otherCtx.member.end, otherCtx.member.axis));
       const local = localPositionOf(faceOther, otherCtx.profile.spec);
+      const drillOther = drillDiametersOf(seriesOther.rule.boltSeries, rules);
       for (let k = 0; k < nOther; k++) {
         const pos = along + (k - (nOther - 1) / 2) * rules.bracketHolePitchMm;
         if (pos < lo || pos > hi) {
@@ -312,6 +334,9 @@ function planBracketJoint(
           boltAxis,
           boltSeries: seriesOther.rule.boltSeries,
           diameterMm: boltDiameterOf(seriesOther.rule.boltSeries),
+          clearanceDrillMm: drillOther.clearance,
+          tapDrillMm: drillOther.tap,
+          depthMm: null,
         });
       }
     } else {

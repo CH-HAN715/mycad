@@ -904,8 +904,14 @@ function cmdDxf(args: readonly string[]): number {
 
 function cmdDrawing(args: readonly string[]): number {
   const flags = parseFlags(args, { allowOut: true });
-  const model = buildFrame(frameInputFromFlags(flags, 'drawing'));
-  const plan = planConnections(model);
+  assertNoPresetOrProfile(flags, 'drawing');
+  const raw = parseJsonText(
+    readInput(flags.file),
+    'drawing 输入形如 {"frame":{...}} 或 {"frame":{...},"options":{"rules":{...}}}',
+  );
+  const { frame, options } = parseConnectInput(raw);
+  const model = buildFrame(frame);
+  const plan = planConnections(model, options);
   const drawing = memberDrawingsToDxf(model, plan);
 
   if (flags.out !== null) writeTextFile(flags.out, drawing.dxf);
@@ -919,6 +925,8 @@ function cmdDrawing(args: readonly string[]): number {
           format: MEMBER_DXF_PROVENANCE.format,
           units: 'mm',
           datum: MEMBER_DXF_PROVENANCE.datum,
+          toleranceNote: drawing.toleranceNote,
+          drillSource: drawing.drillSource,
           stats: drawing.stats,
           memberLegend: drawing.memberLegend,
           holeLegend: drawing.holeLegend,
@@ -937,6 +945,7 @@ function cmdDrawing(args: readonly string[]): number {
       `已写入杆件孔位图：${flags.out}（${drawing.stats.members} 根杆件，${drawing.stats.holes} 个孔，${drawing.stats.circles} 个圆）`,
     );
     console.log(`基准：${MEMBER_DXF_PROVENANCE.datum}`);
+    console.log(`一般公差：${drawing.toleranceNote}`);
     for (const warning of drawing.warnings) console.log(`警告：${warning}`);
     console.log(`边界：${MEMBER_DXF_PROVENANCE.disclaimer}`);
   }

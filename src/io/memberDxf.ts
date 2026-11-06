@@ -25,10 +25,11 @@ export const MEMBER_DXF_PROVENANCE = {
   assumptions: [
     '孔位来自 L3 规则引擎的角件近似（端距 + 等间距展开），不是零件厂商的实际孔型',
     '未启用 trim 时 cutLength 等于中心线长；启用后孔位仍按物理端面起算',
-    '螺栓孔按公称直径画圆，不画沉孔、锪面与螺纹小径',
+    '螺栓孔按公称直径画圆，钻孔直径按规则的 ISO 273 中系列公开表另列一栏，不画沉孔与锪面',
+    '一期所有孔按通孔输出（DEPTH=THRU），不做盲孔与攻丝深度决策',
   ],
   limitations: [
-    '不含尺寸公差、形位公差、孔深、螺纹规格与表面粗糙度',
+    '一般公差只给注记量级（类比公开 ISO 2768 表），不含逐尺寸公差带、形位公差与表面粗糙度',
     '不使用 DIMENSION 实体，尺寸以线段加文本近似，CAD 内取值须以文本为准',
     'DXF 内只用 ASCII 标签（M1/M1-H1），杆件原名只出现在返回的 legend 里，避免 R12 中文编码歧义',
     'T 接侧面孔按槽面螺栓近似，实物角件必须复核',
@@ -60,6 +61,12 @@ export interface HoleLegendRow {
   /** 距 start 端物理端面的距离，mm；无法定位时为 null。 */
   readonly alongBarMm: number | null;
   readonly diameterMm: number | null;
+  /** 通光孔钻孔直径，mm；系列不在钻孔表内为 null。 */
+  readonly clearanceDrillMm: number | null;
+  /** 攻丝底孔直径，mm；选择攻丝工艺时使用。 */
+  readonly tapDrillMm: number | null;
+  /** 孔深，mm；null 表示通孔。 */
+  readonly depthMm: number | null;
   readonly boltSeries: string;
   readonly boltAxis: string;
   /** 孔位是否落在 0..cutLength 之内；false 表示只列表未画入视图。 */
@@ -71,12 +78,21 @@ export interface MemberDrawingResult {
   readonly memberLegend: readonly MemberLegendRow[];
   readonly holeLegend: readonly HoleLegendRow[];
   readonly warnings: readonly string[];
+  /** 图纸上实际写出的公差注记（已保证 ASCII）。 */
+  readonly toleranceNote: string;
+  /** 钻孔直径表来源，随规则覆盖变化。 */
+  readonly drillSource: string;
   readonly stats: {
     readonly members: number;
     readonly holes: number;
     readonly circles: number;
     readonly texts: number;
   };
+}
+
+/** DXF 正文必须是 ASCII：用户覆盖的注记含中文时降级并告警，不写进图。 */
+function asciiOnly(value: string): string {
+  return value.replace(/[^\x20-\x7E]/g, '');
 }
 
 const LAYER_CENTER = 'CENTER';
@@ -112,6 +128,14 @@ export function memberDrawingsToDxf(
   if (!/^[A-Za-z0-9_\-]+$/.test(layer)) {
     throw new RangeError(`图层名只允许字母、数字、下划线与连字符：${layer}`);
   }
+  const rawNote = plan.rules.generalToleranceNote;
+  const rawDrill = plan.rules.drillTableSource;
+  const toleranceNote = asciiOnly(rawNote) || 'GENERAL TOL NOT STATED (SEE LEGEND)';
+  const drillSource = asciiOnly(rawDrill) || 'DRILL TABLE OVERRIDDEN (SOURCE NON-ASCII, SEE LEGEND)';
+  const warnings: string[] = [];
+  if (asciiOnly(rawNote).length !== rawNote.length || asciiOnly(rawDrill).length !== rawDrill.length) {
+    warnings.push('generalToleranceNote 或 drillTableSource 含非 ASCII 字符，已从 DXF 正文剔除，原文见返回字段与 legend');
+  }
 
   const holesByMember = new Map<string, ConnectorHole[]>();
   for (const joint of plan.joints) {
@@ -125,7 +149,6 @@ export function memberDrawingsToDxf(
   const entities: string[] = [];
   const memberLegend: MemberLegendRow[] = [];
   const holeLegend: HoleLegendRow[] = [];
-  const warnings: string[] = [];
   let circles = 0;
   let texts = 0;
   /** 当前块原点的图纸 y（DXF y 向上），每块向下推进。 */
@@ -190,10 +213,16 @@ export function memberDrawingsToDxf(
     entities.push(vLine(0, down - 3, down + 3, LAYER_DIM));
     entities.push(vLine(length, down - 3, down + 3, LAYER_DIM));
     down += 4;
-    entities.push(text(`CUT LENGTH ${num(length)} mm  (+/- NOT TOLERANCED)`, 0, down, TEXT_H, LAYER_DIM));
+    entities.push(text(`CUT LENGTH ${num(length)} mm`, 0, down, TEXT_H, LAYER_DIM));
+    down += 5;
+    entities.push(text(toleranceNote, 0, down, TEXT_H, LAYER_DIM));
+    down += 5;
+    entities.push(text(`DRILL TABLE: ${drillSource}`, 0, down, TEXT_H, LAYER_DIM));
     down += TABLE_HEAD;
 
-    entities.push(text('HOLE     FACE     X(mm)      DIA   SERIES  AXIS', 0, down, TEXT_H, LAYER_TEXT));
+    entities.push(
+      text('HOLE     FACE     X(mm)      DIA   DRILL  DEPTH   SERIES  AXIS', 0, down, TEXT_H, LAYER_TEXT),
+    );
     down += TABLE_ROW;
 
     holes.forEach((hole, i) => {
@@ -211,14 +240,19 @@ export function memberDrawingsToDxf(
         at: hole.at,
         alongBarMm: along,
         diameterMm: hole.diameterMm,
+        clearanceDrillMm: hole.clearanceDrillMm,
+        tapDrillMm: hole.tapDrillMm,
+        depthMm: hole.depthMm,
         boltSeries: hole.boltSeries,
         boltAxis: hole.boltAxis,
         inBar,
       });
 
+      const drillCell = hole.clearanceDrillMm === null ? 'TBD' : hole.clearanceDrillMm.toFixed(1);
+      const depthCell = hole.depthMm === null ? 'THRU' : hole.depthMm.toFixed(1);
       entities.push(
         text(
-          `${holeLabel.padEnd(8)} ${hole.face.toUpperCase().padEnd(8)} ${num(along).padStart(8)}  ${num(hole.diameterMm).padStart(5)}  ${hole.boltSeries.padEnd(6)} ${hole.boltAxis.toUpperCase()}`,
+          `${holeLabel.padEnd(8)} ${hole.face.toUpperCase().padEnd(8)} ${num(along).padStart(8)}  ${num(hole.diameterMm).padStart(5)}  ${drillCell.padStart(5)}  ${depthCell.padStart(6)}  ${hole.boltSeries.padEnd(6)} ${hole.boltAxis.toUpperCase()}`,
           0,
           down,
           TEXT_H,
@@ -259,6 +293,8 @@ export function memberDrawingsToDxf(
     memberLegend,
     holeLegend,
     warnings,
+    toleranceNote,
+    drillSource,
     stats: { members: model.members.length, holes: holeLegend.length, circles, texts },
   };
 }
