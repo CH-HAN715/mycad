@@ -3,7 +3,7 @@
 本文件记录 Mycad 的所有值得注意的变更。
 格式遵循 Keep a Changelog，版本号遵循语义化版本（SemVer），最新在最上方。
 
-## [Unreleased]
+## v0.1.0 - 2026-11-06
 
 ### 新增
 
