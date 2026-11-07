@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "description": "工业级铝型材框架设计引擎 · agent-first CLI",
   "packageManager": "pnpm@10.30.3",
   "engines": {
