@@ -55,6 +55,12 @@ export interface ConnectRules {
   readonly tolHoleDepthMm: number;
   /** 端头角度公差，deg。 */
   readonly tolAngleDeg: number;
+  /** 方切端面对基准 B 的垂直度公差，mm。 */
+  readonly tolEndSquarenessMm: number;
+  /** 加工面表面粗糙度 Ra，um。 */
+  readonly surfaceRoughnessRaUm: number;
+  /** 表面粗糙度数值的来源标注，必须出现在输出里。 */
+  readonly roughnessSource: string;
   /** 攻丝精度等级注记（来源为公开工艺页，非本引擎实测）。 */
   readonly threadClass: string;
   /** 上述公差数值的来源标注，必须出现在输出里。 */
@@ -93,7 +99,12 @@ export const DEFAULT_CONNECT_RULES: ConnectRules = {
   tolHolePositionMm: 0.2,
   tolHoleDepthMm: 0.2,
   tolAngleDeg: 0.2,
+  // 垂直度与 Ra 均为工程惯例量级：机加工铝型材常见 Ra 3.2，方切端面按孔位公差同档给 0.2。
+  tolEndSquarenessMm: 0.2,
+  surfaceRoughnessRaUm: 3.2,
   threadClass: '6H',
+  roughnessSource:
+    'ENGINEERING PRACTICE, NOT A STANDARD CLAUSE (MACHINED ALUMINUM Ra 3.2 um; SAWN ENDS AS CUT, NOT MACHINED)',
   toleranceSource:
     'JLCFA public aluminum-extrusion process sheet, checked 2026-11-06 (vendor capability figures, not a standard clause)',
   source: '工程惯例（欧标型材公开资料归纳），非规范条文；可整表覆盖',
@@ -155,6 +166,8 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     'tolHolePositionMm',
     'tolHoleDepthMm',
     'tolAngleDeg',
+    'tolEndSquarenessMm',
+    'surfaceRoughnessRaUm',
   ] as const;
   for (const key of numericKeys) {
     if (raw[key] !== undefined) out[key] = readNumberField(raw, key, 'rules', [...numericKeys, 'fastenerSeries', 'source']);
@@ -192,7 +205,7 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     out['source'] = raw['source'];
   }
 
-  const stringKeys = ['source', 'drillTableSource', 'generalToleranceNote', 'toleranceSource', 'threadClass'] as const;
+  const stringKeys = ['source', 'drillTableSource', 'generalToleranceNote', 'toleranceSource', 'threadClass', 'roughnessSource'] as const;
   for (const key of stringKeys) {
     if (raw[key] !== undefined) {
       const value = raw[key];

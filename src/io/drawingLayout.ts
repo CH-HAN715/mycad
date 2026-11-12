@@ -122,6 +122,12 @@ export interface LayoutResult {
   readonly positionZoneMm: number;
   /** 钻孔直径表来源，随规则覆盖变化。 */
   readonly drillSource: string;
+  /** 表面粗糙度来源标注（已保证 ASCII）。 */
+  readonly roughnessSource: string;
+  /** 方切端面对基准 B 的垂直度，mm。 */
+  readonly endSquarenessMm: number;
+  /** 加工面表面粗糙度 Ra，um。 */
+  readonly surfaceRoughnessRaUm: number;
   readonly blocks: readonly LayoutBlock[];
   readonly stats: {
     readonly members: number;
@@ -166,11 +172,16 @@ export function layoutMemberDrawings(
   const rules = plan.rules;
   const rawNote = rules.generalToleranceNote;
   const rawDrill = rules.drillTableSource;
+  const rawRough = rules.roughnessSource;
   const toleranceNote = asciiOnly(rawNote) || 'GENERAL TOL NOT STATED (SEE LEGEND)';
   const drillSource = asciiOnly(rawDrill) || 'DRILL TABLE OVERRIDDEN (SOURCE NON-ASCII, SEE LEGEND)';
+  const roughnessSource = asciiOnly(rawRough) || 'ROUGHNESS SOURCE NOT STATED';
   const warnings: string[] = [];
   if (asciiOnly(rawNote).length !== rawNote.length || asciiOnly(rawDrill).length !== rawDrill.length) {
     warnings.push('generalToleranceNote 或 drillTableSource 含非 ASCII 字符，已从图面剔除，原文见返回字段与 legend');
+  }
+  if (asciiOnly(rawRough).length !== rawRough.length) {
+    warnings.push('roughnessSource 含非 ASCII 字符，已从图面剔除，原文见返回字段与 legend');
   }
   const gapMm = options.gapMm ?? DEFAULT_GAP;
   const layer = options.layer ?? 'MYCAD';
@@ -346,6 +357,40 @@ export function layoutMemberDrawings(
     down = gdtTop + 7 + t.textH + 1.2;
     text(`NOTE 3: ZONE %%c${zoneMm.toFixed(2)} = 2 x +/-${rules.tolHolePositionMm.toFixed(2)} (INSCRIBED CIRCLE OF +/- SQUARE; CONSERVATIVE)`, 0, down, t.textH, LAYER_DIM);
     down += t.rowStep;
+
+    // 端面垂直度：只对方切端面成立；两端都斜切时没有可引用的方端面，改注角度公差。
+    const miteredEnds = new Set(miters.map((cut) => cut.end));
+    const hasSquareEnd = !miteredEnds.has('start') || !miteredEnds.has('end');
+    const squarenessMm = rules.tolEndSquarenessMm;
+    if (hasSquareEnd) {
+      text('SQUARE ENDS: PERPENDICULARITY (GD&T FRAME)', 0, down, t.textH, LAYER_DIM);
+      down += t.rowStep - 1;
+      const perpTop = down;
+      box(0, perpTop, 28, 7, LAYER_GDT);
+      vLine(8, perpTop, perpTop + 7, LAYER_GDT);
+      vLine(20, perpTop, perpTop + 7, LAYER_GDT);
+      // 垂直度符号：横底边 + 竖笔画（⊥）。R12 与 PDF 都没有 GD&T 实体，用线段拼。
+      hLine(2, 6, perpTop + 5.5, LAYER_GDT);
+      vLine(4, perpTop + 1.5, perpTop + 5.5, LAYER_GDT);
+      text(squarenessMm.toFixed(2), 9.5, perpTop + 4, t.textH - 0.6, LAYER_DIM);
+      text('B', 21.5, perpTop + 4, t.textH - 0.6, LAYER_DIM);
+      down = perpTop + 7 + t.textH + 1.2;
+      text(`NOTE 4: SQUARE-CUT END FACE PERPENDICULAR TO DATUM B WITHIN ${squarenessMm.toFixed(2)} (ENGINEERING PRACTICE, NOT A STANDARD CLAUSE)`, 0, down, t.textH, LAYER_DIM);
+      down += t.rowStep;
+    } else {
+      text(`NOTE 4: BOTH ENDS MITERED; END-FACE PERPENDICULARITY N/A, SEE MITER ANGLE TOL +/-${rules.tolAngleDeg.toFixed(1)}`, 0, down, t.textH, LAYER_DIM);
+      down += t.rowStep;
+    }
+
+    // 表面粗糙度：ISO 1302 风格勾形符号（线段拼，非标准符号实体），数值在右侧。
+    const raUm = rules.surfaceRoughnessRaUm;
+    const roughTop = down + 1;
+    sink.line(2, Y(roughTop + 1), 4.5, Y(roughTop + 3.4), LAYER_GDT);
+    sink.line(4.5, Y(roughTop + 3.4), 11, Y(roughTop + 0.2), LAYER_GDT);
+    text(`Ra ${raUm} - SURFACE FINISH, MACHINED FACES ONLY (SYMBOL STYLIZED)`, 13, roughTop + 2.4, t.textH, LAYER_DIM);
+    down += t.rowStep + 2;
+    text(`SURFACE FINISH SRC: ${roughnessSource}`, 0, down, t.textH, LAYER_DIM);
+    down += t.rowStep;
     down += t.tableHead;
 
     text('HOLE     FACE     X(mm)      DIA   DRILL  DEPTH   SERIES  AXIS   POS-TOL', 0, down, t.textH, LAYER_TEXT);
@@ -452,6 +497,9 @@ export function layoutMemberDrawings(
     warnings,
     toleranceNote,
     drillSource,
+    roughnessSource,
+    endSquarenessMm: rules.tolEndSquarenessMm,
+    surfaceRoughnessRaUm: rules.surfaceRoughnessRaUm,
     positionZoneMm: 2 * rules.tolHolePositionMm,
     blocks,
     stats: { members: model.members.length, holes: holeLegend.length, circles, texts },

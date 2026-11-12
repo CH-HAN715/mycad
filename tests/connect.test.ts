@@ -57,6 +57,16 @@ describe('L3 规则表', () => {
       /openingMaxMm >= openingMinMm/,
     );
   });
+
+  it('垂直度与表面粗糙度可覆盖，且来源不得留空', () => {
+    const merged = parseRulesOverride({ tolEndSquarenessMm: 0.1, surfaceRoughnessRaUm: 1.6 });
+    assert.equal(merged.tolEndSquarenessMm, 0.1);
+    assert.equal(merged.surfaceRoughnessRaUm, 1.6);
+    assert.equal(merged.roughnessSource, DEFAULT_CONNECT_RULES.roughnessSource);
+    assert.throws(() => parseRulesOverride({ tolEndSquarenessMm: 0 }), /正的有限数/);
+    assert.throws(() => parseRulesOverride({ surfaceRoughnessRaUm: -3.2 }), /正的有限数/);
+    assert.throws(() => parseRulesOverride({ roughnessSource: ' ' }), /非空字符串/);
+  });
 });
 
 describe('L3 角接（corner）', () => {

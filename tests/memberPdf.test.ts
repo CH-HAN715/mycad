@@ -151,6 +151,11 @@ describe('mycad memberPdf 图面内容', () => {
     assert.match(text, /DATUM A: START FACE/);
     assert.match(text, /ALL HOLES: POSITION/);
     assert.match(text, /DIA0\.40/);
+    assert.match(text, /SQUARE ENDS: PERPENDICULARITY/);
+    assert.match(text, /Ra 3\.2 - SURFACE FINISH/);
+    assert.match(text, /SURFACE FINISH SRC: ENGINEERING PRACTICE/);
+    assert.equal(out.endSquarenessMm, 0.2);
+    assert.equal(out.surfaceRoughnessRaUm, 3.2);
     assert.equal(text.includes('%%c'), false);
     assert.ok(out.stats.circles > 0);
     assert.ok(out.holeLegend.length > 0);

@@ -349,7 +349,11 @@ describe('mycad memberDxf 位置度标注', () => {
     const gdtCircles = entities.filter((e) => e.kind === 'CIRCLE' && e.g['8'] === 'GDT');
     const gdtLines = entities.filter((e) => e.kind === 'LINE' && e.g['8'] === 'GDT');
     assert.equal(gdtCircles.length, model.members.length, '每根杆一个位置度符号圆');
-    assert.equal(gdtLines.length, 9 * model.members.length, '框体 4 + 分隔 3 + 十字 2');
+    assert.equal(
+      gdtLines.length,
+      19 * model.members.length,
+      '位置度 9（框 4 + 分隔 3 + 十字 2）+ 垂直度 8（框 4 + 分隔 2 + 符号 2）+ 粗糙度符号 2',
+    );
     assert.ok(gdtCircles.every((c) => Number(c.g['40']) === 2), '符号圆半径 2mm');
   });
 
@@ -363,6 +367,67 @@ describe('mycad memberDxf 位置度标注', () => {
     assert.match(out.dxf, /%%c0\.20/);
     assert.match(out.dxf, /NOTE 3: ZONE %%c0\.20 = 2 x \+\/-0\.10/);
     assert.doesNotMatch(out.dxf, /%%c0\.40/);
+  });
+});
+
+describe('mycad memberDxf 端面垂直度与表面粗糙度', () => {
+  it('方切端面输出垂直度框（0.20 对基准 B）与 Ra 3.2 注记', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.dxf, /SQUARE ENDS: PERPENDICULARITY \(GD&T FRAME\)/);
+    assert.match(out.dxf, /NOTE 4: SQUARE-CUT END FACE PERPENDICULAR TO DATUM B WITHIN 0\.20/);
+    assert.match(out.dxf, /Ra 3\.2 - SURFACE FINISH/);
+    assert.match(out.dxf, /SURFACE FINISH SRC: ENGINEERING PRACTICE, NOT A STANDARD CLAUSE/);
+    assert.equal(out.endSquarenessMm, 0.2);
+    assert.equal(out.surfaceRoughnessRaUm, 3.2);
+    assert.match(out.roughnessSource, /NOT A STANDARD CLAUSE/);
+  });
+
+  it('覆盖垂直度与 Ra 时图面数值同步，来源可整条替换', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(
+      model,
+      planConnections(model, {
+        rules: {
+          tolEndSquarenessMm: 0.1,
+          surfaceRoughnessRaUm: 1.6,
+          roughnessSource: 'CUSTOM SHOP SPEC 2026-11',
+        },
+      }),
+    );
+    assert.match(out.dxf, /WITHIN 0\.10/);
+    assert.match(out.dxf, /Ra 1\.6 - SURFACE FINISH/);
+    assert.match(out.dxf, /SURFACE FINISH SRC: CUSTOM SHOP SPEC 2026-11/);
+    assert.doesNotMatch(out.dxf, /Ra 3\.2/);
+  });
+
+  it('两端均斜切时不出垂直度框，改注斜切角度公差', () => {
+    const model = buildFrame(
+      parseFrameInput({
+        profiles: [
+          {
+            id: 'p40',
+            spec: {
+              width: 40,
+              height: 40,
+              slot: { opening: 8, depth: 8, headWidth: 12, headStart: 3 },
+              bore: { radius: 5, segments: 16 },
+            },
+          },
+        ],
+        members: [
+          { id: 'A', profileId: 'p40', start: [0, 0, 0], end: [600, 0, 0] },
+          { id: 'B', profileId: 'p40', start: [600, 0, 0], end: [600, 0, 600] },
+          { id: 'C', profileId: 'p40', start: [600, 0, 600], end: [0, 0, 600] },
+          { id: 'D', profileId: 'p40', start: [0, 0, 600], end: [0, 0, 0] },
+        ],
+      }),
+    );
+    const plan = planConnections(model, { cornerStrategy: 'miter45' });
+    const out = memberDrawingsToDxf(model, plan);
+    assert.match(out.dxf, /BOTH ENDS MITERED; END-FACE PERPENDICULARITY N\/A/);
+    assert.doesNotMatch(out.dxf, /SQUARE ENDS: PERPENDICULARITY/);
+    assert.match(out.dxf, /Ra 3\.2/);
   });
 });
 
