@@ -5,6 +5,7 @@
  * - 只监听 127.0.0.1；无鉴权，不对外网开放。
  * - 所有 /api/* 返回单份 JSON：成功 {ok:true,...}，失败 {ok:false,code,message,hint}。
  * - 直接调用引擎层函数，与 CLI 共用同一套解析与校验（未知字段一律拒绝）。
+ * - 会话快照落盘到用户状态目录（默认 ~/.local/state/mycad），原子写 + 上一代备份。
  */
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -23,6 +24,7 @@ import { buildBom } from '../production/bom.ts';
 import { CutInputError, planCuts } from '../production/cutPlan.ts';
 import type { CutOptions, CutPieceInput } from '../production/cutPlan.ts';
 import { PAGE_HTML } from './page.ts';
+import { WorkspaceError, defaultStateDir, loadWorkspace, saveWorkspace } from './workspaceStore.ts';
 
 const MAX_BODY_BYTES = 2_000_000;
 
@@ -47,6 +49,9 @@ function engineErrorInfo(error: unknown): { code: string; message: string; hint:
   }
   if (error instanceof GeometryInputError) {
     return { code: 'E_GEOMETRY', message: error.message, hint: error.hint ?? '', status: 400 };
+  }
+  if (error instanceof WorkspaceError) {
+    return { code: error.code, message: error.message, hint: error.hint, status: error.code === 'E_WORKSPACE_IO' ? 500 : 400 };
   }
   if (error instanceof SyntaxError) {
     return { code: 'E_JSON', message: `JSON 解析失败：${error.message}`, hint: '请求体必须是合法 JSON', status: 400 };
@@ -120,7 +125,7 @@ function sectionSource(input: Record<string, unknown>): unknown {
   throw new ServeError('E_SHAPE', '缺少 profileSpec 或 presetProfile', '{"presetProfile":"eu2020"} 或 {"profileSpec":{...}}');
 }
 
-async function handleApi(path: string, body: string, res: ServerResponse): Promise<void> {
+async function handleApi(path: string, body: string, res: ServerResponse, stateDir: string): Promise<void> {
   if (path === 'section') {
     const input = bodyRecord(body);
     const { outer, holes, presetId } = sectionGeometry(sectionSource(input));
@@ -201,7 +206,12 @@ async function handleApi(path: string, body: string, res: ServerResponse): Promi
     sendText(res, 200, text, 'application/dxf', 'section.dxf');
     return;
   }
-  throw new ServeError('E_ROUTE', `未知 API：${path}`, '可用：section、frame、connect、bom、check、cut、dxf-section', 404);
+  if (path === 'workspace') {
+    const file = await saveWorkspace(stateDir, JSON.parse(body) as unknown);
+    sendJson(res, 200, { ok: true, file });
+    return;
+  }
+  throw new ServeError('E_ROUTE', `未知 API：${path}`, '可用：section、frame、connect、bom、check、cut、dxf-section、workspace', 404);
 }
 
 export interface ServeHandle {
@@ -209,8 +219,9 @@ export interface ServeHandle {
   close(): Promise<void>;
 }
 
-export function startServe(options: { port: number; host?: string }): Promise<ServeHandle> {
+export function startServe(options: { port: number; host?: string; stateDir?: string }): Promise<ServeHandle> {
   const host = options.host ?? '127.0.0.1';
+  const stateDir = options.stateDir ?? defaultStateDir();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}`);
     const path = url.pathname;
@@ -224,13 +235,17 @@ export function startServe(options: { port: number; host?: string }): Promise<Se
           sendJson(res, 200, { ok: true, presets: PROFILE_PRESETS });
           return;
         }
+        if (req.method === 'GET' && path === '/api/workspace') {
+          sendJson(res, 200, { ok: true, ...(await loadWorkspace(stateDir)) });
+          return;
+        }
         if (req.method === 'GET' && path === '/vendor/three.module.js') {
           const file = readFileSync(new URL('./vendor/three.module.js', import.meta.url), 'utf8');
           sendText(res, 200, file, 'text/javascript; charset=utf-8');
           return;
         }
         if (req.method === 'POST' && path.startsWith('/api/')) {
-          await handleApi(path.slice('/api/'.length), await readBody(req), res);
+          await handleApi(path.slice('/api/'.length), await readBody(req), res, stateDir);
           return;
         }
         sendJson(res, 404, { ok: false, code: 'E_ROUTE', message: `未知路径：${path}`, hint: '页面在 /，API 在 /api/*' });

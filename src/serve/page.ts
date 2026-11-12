@@ -1,7 +1,10 @@
 /**
  * serve 页面：单文件 HTML，零外部资源（不引 CDN，离线可用）。
  * 结果区同时显示引擎 JSON 与错误提示；数值口径与 CLI 完全一致。
+ * 前端脚本拆到 clientForm.ts / clientViewer.ts，此处只负责 HTML 骨架与内插。
  */
+import { FORM_SCRIPT } from './clientForm.ts';
+import { VIEWER_SCRIPT } from './clientViewer.ts';
 
 export const PAGE_HTML = `<!doctype html>
 <html lang="zh">
@@ -36,6 +39,13 @@ pre{background:#0e1726;color:#d8e2f0;border-radius:6px;padding:10px;font-size:12
   <p>引擎与 CLI 同源 · 只监听 127.0.0.1 · 输出含公式来源与免责，校核不替代工程师判断</p>
 </header>
 <main>
+<section class="full" style="padding:10px 16px">
+  <div class="row" style="align-items:baseline">
+    <strong style="font-size:13px">会话自动保存</strong>
+    <span class="hint">停止输入 0.8 秒后落盘，重开页面自动恢复；主文件不可用时改用上一代备份。</span>
+  </div>
+  <div id="sessionMsg" class="hint" style="margin-top:4px"></div>
+</section>
 <section>
   <h2>① 型材截面</h2>
   <label>内置预设（来源与未证实字段见 mycad presets）</label>
@@ -95,164 +105,8 @@ pre{background:#0e1726;color:#d8e2f0;border-radius:6px;padding:10px;font-size:12
   <p class="hint">左键拖拽旋转 · 滚轮缩放 · 右键平移。杆件渲染为截面外包络实体（槽口与圆角细节不建模），颜色按型材区分；尺寸来自引擎求解结果，与 BOM 同源。</p>
 </section>
 </main>
-<script>
-async function api(path, body, outId, errId) {
-  const out = document.getElementById(outId), err = document.getElementById(errId);
-  out.hidden = true; err.textContent = '';
-  try {
-    const r = await fetch('/api/' + path, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
-    const j = await r.json();
-    if (j.ok === false) { err.textContent = '错误[' + j.code + ']：' + j.message + (j.hint ? '\\n提示：' + j.hint : ''); return; }
-    out.textContent = JSON.stringify(j, null, 2); out.hidden = false;
-  } catch (e) { err.textContent = String(e); }
-}
-function specInput() {
-  const sel = document.getElementById('presetSel').value;
-  if (sel) return {presetProfile: sel};
-  return {profileSpec: JSON.parse(document.getElementById('specBox').value)};
-}
-function calcSection(){ api('section', specInput(), 'sectionOut', 'sectionErr'); }
-async function downloadDxf() {
-  const r = await fetch('/api/dxf-section', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(specInput())});
-  const t = await r.text();
-  if (t.startsWith('{')) { document.getElementById('sectionErr').textContent = JSON.parse(t).message; return; }
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([t], {type:'application/dxf'}));
-  a.download = 'section.dxf'; a.click(); URL.revokeObjectURL(a.href);
-}
-function frameJson(){ return JSON.parse(document.getElementById('frameBox').value); }
-function runFrame(){ api('frame', frameJson(), 'frameOut', 'frameErr'); }
-function runConnect(){ api('connect', frameJson(), 'frameOut', 'frameErr'); }
-function runBom(){ api('bom', {frame: frameJson(), options:{stockMm: +document.getElementById('stockInp').value || undefined, kerfMm: +document.getElementById('kerfInp').value}}, 'frameOut', 'frameErr'); }
-function runCheck(){ api('check', JSON.parse(document.getElementById('checkBox').value), 'checkOut', 'checkErr'); }
-function runCut(){ api('cut', JSON.parse(document.getElementById('cutBox').value), 'cutOut', 'cutErr'); }
-fetch('/api/presets').then(r=>r.json()).then(j=>{
-  const sel = document.getElementById('presetSel');
-  for (const p of j.presets) { const o = document.createElement('option'); o.value = p.id; o.textContent = p.id + ' — ' + p.title; sel.appendChild(o); }
-  const custom = document.createElement('option'); custom.value=''; custom.textContent='自定义 DSL 规格…'; sel.appendChild(custom);
-  sel.value = 'eu2020';
-});
-</script>
-<script type="module">
-import * as THREE from '/vendor/three.module.js';
-
-const viewer = document.getElementById('viewer');
-const info = document.getElementById('sceneInfo');
-const errEl = document.getElementById('sceneErr');
-const PALETTE = [0x4f8fd0, 0xd08a4f, 0x6fbf73, 0xc05f7a, 0x9a7fd0];
-
-let renderer = null, scene = null, camera = null, root = null;
-let theta = 0.7, phi = 1.15, radius = 2, target = new THREE.Vector3();
-
-function ensureRenderer() {
-  if (renderer !== null) return;
-  renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  viewer.appendChild(renderer.domElement);
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0e1726);
-  camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x2a3a52, 1.1));
-  const dir = new THREE.DirectionalLight(0xffffff, 1.4);
-  dir.position.set(2, 3, 2);
-  scene.add(dir);
-  scene.add(new THREE.GridHelper(4, 20, 0x3a4f6b, 0x223046));
-  root = new THREE.Group();
-  scene.add(root);
-
-  let drag = null;
-  const el = renderer.domElement;
-  el.addEventListener('contextmenu', (e) => e.preventDefault());
-  el.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, btn: e.button }; el.setPointerCapture(e.pointerId); });
-  el.addEventListener('pointermove', (e) => {
-    if (drag === null) return;
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    drag.x = e.clientX; drag.y = e.clientY;
-    if (drag.btn === 0) { theta -= dx * 0.008; phi = Math.min(Math.PI - 0.05, Math.max(0.05, phi - dy * 0.008)); }
-    else if (drag.btn === 2) {
-      const right = new THREE.Vector3(), up = new THREE.Vector3();
-      camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
-      const k = radius * 0.0011;
-      target.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
-    }
-  });
-  el.addEventListener('pointerup', () => { drag = null; });
-  el.addEventListener('wheel', (e) => { e.preventDefault(); radius = Math.min(30, Math.max(0.2, radius * Math.exp(e.deltaY * 0.001))); }, { passive: false });
-
-  renderer.setAnimationLoop(() => {
-    const w = viewer.clientWidth, h = viewer.clientHeight;
-    if (el.width !== Math.floor(w * renderer.getPixelRatio()) || el.height !== Math.floor(h * renderer.getPixelRatio())) {
-      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
-    }
-    camera.position.set(
-      target.x + radius * Math.sin(phi) * Math.sin(theta),
-      target.y + radius * Math.cos(phi),
-      target.z + radius * Math.sin(phi) * Math.cos(theta));
-    camera.lookAt(target);
-    renderer.render(scene, camera);
-  });
-}
-
-function clearRoot() {
-  while (root.children.length > 0) {
-    const obj = root.children.pop();
-    if (obj.geometry !== undefined) obj.geometry.dispose();
-    if (obj.material !== undefined) obj.material.dispose();
-  }
-}
-
-// 引擎约定 z 轴向上、单位 mm；three.js 约定 y 轴向上、单位 m。
-function toScene(p) {
-  return new THREE.Vector3(p.x / 1000, p.z / 1000, -p.y / 1000);
-}
-
-function memberBox(model, member, color) {
-  const s = toScene(member.start), e = toScene(member.end);
-  const dir = e.sub(s).normalize();
-  const profile = model.profiles.find((p) => p.id === member.profileId);
-  const w = (profile !== undefined ? profile.spec.width : 20) / 1000;
-  const h = (profile !== undefined ? profile.spec.height : 20) / 1000;
-  const cut = member.cutLength / 1000;
-  const geo = new THREE.BoxGeometry(cut, h, w);
-  const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.55, metalness: 0.25 });
-  const mesh = new THREE.Mesh(geo, mat);
-  const mid = s.clone().addScaledVector(dir, (member.trimStart + member.cutLength / 2) / 1000);
-  mesh.position.copy(mid);
-  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
-  return mesh;
-}
-
-window.render3d = async function render3d() {
-  errEl.textContent = '';
-  try {
-    const r = await fetch('/api/frame', { method: 'POST', headers: { 'content-type': 'application/json' }, body: document.getElementById('frameBox').value });
-    const j = await r.json();
-    if (j.ok === false) { errEl.textContent = '错误[' + j.code + ']：' + j.message + (j.hint ? ' 提示：' + j.hint : ''); return; }
-    ensureRenderer();
-    clearRoot();
-    const model = j.model;
-    const colorOf = new Map();
-    model.profiles.forEach((p, i) => colorOf.set(p.id, PALETTE[i % PALETTE.length]));
-    for (const m of model.members) root.add(memberBox(model, m, colorOf.get(m.profileId) ?? 0x8899aa));
-    const jointGeo = new THREE.SphereGeometry(0.012, 16, 12);
-    const jointMat = new THREE.MeshStandardMaterial({ color: 0xd7dce4, roughness: 0.4 });
-    for (const jt of model.joints) {
-      const sp = new THREE.Mesh(jointGeo, jointMat);
-      sp.position.copy(toScene(jt.point));
-      root.add(sp);
-    }
-    root.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(root);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    target.copy(center);
-    radius = Math.max(0.8, size.length() * 1.4);
-    info.textContent = model.members.length + ' 根杆件、' + model.joints.length + ' 个关节已渲染（包围盒 宽×高×深 ' +
-      Math.round(size.x * 1000) + '×' + Math.round(size.y * 1000) + '×' + Math.round(size.z * 1000) + ' mm，视口 ' +
-      viewer.clientWidth + '×' + viewer.clientHeight + 'px）';
-  } catch (e) { errEl.textContent = String(e); }
-};
-</script>
+<script>${FORM_SCRIPT}</script>
+<script type="module">${VIEWER_SCRIPT}</script>
 </body>
 </html>
 `;
