@@ -1,0 +1,44 @@
+name: Bug 报告
+description: 报告可复现的问题
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请按 [SECURITY.md](https://github.com/CH-HAN715/mycad/blob/main/SECURITY.md) 的私密渠道报告，不要在这里公开。
+  - type: input
+    id: version
+    attributes:
+      label: 项目版本
+      description: package.json 中的 version
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 运行环境
+      description: 操作系统、Node.js 版本、pnpm 版本
+      placeholder: Ubuntu 22.04 / Node 24.x / pnpm 10.30.3
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 最小复现命令与输入文件内容
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 报错全文或日志
+    validations:
+      required: true

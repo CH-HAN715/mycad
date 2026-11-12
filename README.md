@@ -1,5 +1,7 @@
 # Mycad
 
+[![verify](https://github.com/CH-HAN715/mycad/actions/workflows/verify.yml/badge.svg)](https://github.com/CH-HAN715/mycad/actions/workflows/verify.yml)
+
 工业级铝型材框架设计引擎 · agent-first CLI。
 
 自算截面特性 → 框架求解 → 连接件选型 → 强度/挠度校核 → BOM / 定尺下料 / DXF 图纸，一条命令行流水线。几何与计算引擎零运行时第三方依赖，每个工程量可追溯到公式、输入、单位与来源。
@@ -12,7 +14,7 @@
 
 ## 快速开始
 
-要求 Node.js >= 24。
+要求 Node.js >= 24。当前在 Linux 上开发与验证，其他平台未测试。
 
 ```bash
 pnpm install
@@ -46,14 +48,16 @@ pnpm bench          # 手算对照算例
 pnpm release:check  # 发布一致性自检
 ```
 
-数值计算改动必须附可手算复核的对照算例（`tests/fixtures/` 与 `src/verify/`），没有算例不合并。
+数值计算改动必须附可手算复核的对照算例（`src/verify/`），没有算例不合并。
 
 ## 架构
 
 八层，依赖只能自上而下：几何底座 → 截面特性 → 连接 → 装配 → 生产 → 校核 → 输出 → 交互。
 
+## 反馈与安全
+
+问题与建议请走 [GitHub Issues](https://github.com/CH-HAN715/mycad/issues)，参与前请读 [CONTRIBUTING.md](CONTRIBUTING.md) 与[行为准则](CODE_OF_CONDUCT.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 的私密渠道报告，不要公开提交。
+
 ## 许可证
 
 [Apache-2.0](LICENSE)。第三方依赖当前仅 vendored three.js（MIT），许可证全文见 [src/serve/vendor/LICENSE](src/serve/vendor/LICENSE)。
-
-贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。

@@ -5,6 +5,14 @@
   "type": "module",
   "license": "Apache-2.0",
   "description": "工业级铝型材框架设计引擎 · agent-first CLI",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CH-HAN715/mycad.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CH-HAN715/mycad/issues"
+  },
+  "homepage": "https://github.com/CH-HAN715/mycad#readme",
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=24.0.0"
