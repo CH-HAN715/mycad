@@ -519,7 +519,7 @@ function cmdPresets(args: readonly string[]): number {
     for (const field of preset.unverifiedFields) console.log(`  未证实：${field}`);
     console.log('');
   }
-  console.log('尺寸出处与矛盾记录见 docs/型材数据源.md；理想化截面不含空心腔，截面特性偏大。');
+  console.log('尺寸数值取自公开网页/样本，来源与核对日期随预设输出；理想化截面不含空心腔，截面特性偏大。');
   return EXIT.ok;
 }
 
@@ -563,7 +563,7 @@ function cmdSection(args: readonly string[]): number {
   return EXIT.ok;
 }
 
-/** 预设型材：并列输出厂家公布值与理想化计算值，声明偏差方向（AGENTS.md 十一.1/十一.5）。 */
+/** 预设型材：并列输出厂家公布值与理想化计算值，声明偏差方向。 */
 function printPresetReference(preset: ProfilePreset, props: SectionProperties): void {
   console.log('');
   console.log(`型材预设：${preset.id}（${preset.title}）`);

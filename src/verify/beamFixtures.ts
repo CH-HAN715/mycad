@@ -4,7 +4,7 @@ import { U } from '../geom/units.ts';
 import { TOL } from '../geom/tolerance.ts';
 
 /**
- * L6 校核的手算对照算例库（AGENTS.md 十一.5）。
+ * L6 校核的手算对照算例库。
  * 期望值由独立算式（分数/闭式）推出，推导行可手算复核；
  * 实测列来自 runCheck 的输出，两边不共享实现。
  */

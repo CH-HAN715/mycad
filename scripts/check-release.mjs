@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 发布一致性自检（AGENTS.md 第三、四、六、十节的机械执行）。
+ * 发布一致性自检。
  *
  * 只做一件事：把过去靠人盯的规矩变成会失败的检查。
  * 任何一项不过就 exit 1，并打印三处实际值的对照表。
@@ -70,7 +70,7 @@ for (const file of tracked) {
     failures.push({
       check: '版权素材',
       detail: `疑似厂商素材被跟踪：${file}`,
-      fix: 'AGENTS.md 第六节禁止搬用原版代码、图标、位图、帮助文本与私有格式内容',
+      fix: '禁止搬用原版代码、图标、位图、帮助文本与私有格式内容',
     });
   }
 }
@@ -95,7 +95,7 @@ if (nested.length > 0) {
   });
 }
 
-// 4) 校核算例必须入库（AGENTS.md 十一.5）
+// 4) 校核算例必须入库
 const beamFixtures = 'src/verify/beamFixtures.ts';
 if (!existsSync(join(ROOT, beamFixtures))) {
   failures.push({ check: '算例入库', detail: `缺少 ${beamFixtures}`, fix: '校核改动必须带可手算对照算例入库' });

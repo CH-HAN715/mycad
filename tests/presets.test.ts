@@ -33,7 +33,7 @@ describe('型材预设数据', () => {
     assert.ok(ratio > 1.15 && ratio < 1.35, `偏差方向应为系统性偏大，实际比值 ${ratio.toFixed(3)}`);
   });
 
-  it('预设来源带核对日期与 URL（AGENTS.md 五.1）', () => {
+  it('预设来源带核对日期与 URL', () => {
     for (const preset of PROFILE_PRESETS) {
       if (preset.reference === undefined) continue;
       assert.match(preset.reference.checkedAt, /^\d{4}-\d{2}-\d{2}$/);

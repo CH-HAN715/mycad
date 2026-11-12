@@ -6,7 +6,7 @@ import { SYN_2020_SPEC } from '../src/verify/fixtures.ts';
 import { findProfilePreset } from '../src/geom/presets.ts';
 import { BEAM_VERIFY_CASES, compareBeamCase } from '../src/verify/beamFixtures.ts';
 
-describe('L6 手算对照算例（AGENTS.md 十一.5）', () => {
+describe('L6 手算对照算例', () => {
   for (const testCase of BEAM_VERIFY_CASES) {
     it(`${testCase.id} 与手算值在浮点舍入级一致`, () => {
       const result = runCheck(testCase.input);

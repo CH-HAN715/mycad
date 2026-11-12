@@ -6,7 +6,7 @@ import { buildProfile } from '../geom/profile.ts';
 import { TOL } from '../geom/tolerance.ts';
 
 /**
- * 手算对照算例库（AGENTS.md 十一.5）。
+ * 手算对照算例库。
  * 这一份数据同时被三处使用：单元测试、`mycad bench` 自检、文档里的验收依据。
  * 每个算例的 derivation 必须能让人不看代码就复核。
  */

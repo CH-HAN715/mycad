@@ -1,4 +1,4 @@
-// 单位在类型层固定（AGENTS.md 十一.4）：branded number，零运行时开销。
+// 单位在类型层固定：branded number，零运行时开销。
 // 禁止裸数字跨层传递——跨层函数签名必须带单位类型。
 
 export type Mm = number & { readonly __u: 'mm' };

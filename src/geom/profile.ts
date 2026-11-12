@@ -60,7 +60,7 @@ const DEFAULT_BORE_SAGITTA = 0.01;
 const MIN_BORE_SEGMENTS = 8;
 const MAX_BORE_SEGMENTS = 512;
 
-/** 参数化截面模型的来源与边界声明（AGENTS.md 第十一节）。 */
+/** 参数化截面模型的来源与边界声明。 */
 export const PROFILE_PROVENANCE = {
   model: 'straight_edge_idealized_profile',
   supported: [

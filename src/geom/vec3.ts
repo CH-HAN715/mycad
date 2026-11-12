@@ -1,7 +1,7 @@
 import type { Mm } from './units.ts';
 import { U } from './units.ts';
 
-/** 三维点，坐标单位固定 mm（AGENTS.md 十一.4）。 */
+/** 三维点，坐标单位固定 mm。 */
 export interface Vec3 {
   readonly x: Mm;
   readonly y: Mm;

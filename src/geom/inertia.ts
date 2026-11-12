@@ -6,7 +6,6 @@ import { U } from './units.ts';
 
 /**
  * L2 截面特性：由有向多边形轮廓的惯性矩积分直接算出，不依赖任何供应商样本表。
- * 见 docs/工业级范围与里程碑.md 第 3 节。
  *
  * 对多边形而言这些积分是精确解（不是近似），因此测试验收口径取浮点舍入级相对误差。
  * 孔洞以 CW（负面积）绕向参与代数和，扣除自动成立。
@@ -195,7 +194,7 @@ export function sectionProperties(
   };
 }
 
-/** 输出层需要的来源与免责字段（AGENTS.md 十一.1）。 */
+/** 输出层需要的来源与免责字段。 */
 export const SECTION_PROVENANCE = {
   method: 'polygon_second_moment_integral',
   formulas: [

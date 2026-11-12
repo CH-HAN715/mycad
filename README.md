@@ -7,7 +7,7 @@
 ## 状态声明（请先读这段）
 
 - 当前为 **0.x 早期版本**，接口与文件格式随时可能变化。
-- **不是生产级软件**：孔位图是加工参考图，不是可签收的下厂图纸；投产前必须由工程师补齐工艺并确认。差距清单见 [docs/生产级差距清单.md](docs/生产级差距清单.md)。
+- **不是生产级软件**：孔位图是加工参考图，不是可签收的下厂图纸；投产前必须由工程师补齐工艺并确认。
 - **不做结构认证**：校核输出仅覆盖标准工况解析解，报告中的默认限值标注「工程惯例，非规范条文」。任何输出都不构成「符合 GB/ISO xxx」的合规声明。
 
 ## 快速开始
@@ -50,10 +50,10 @@ pnpm release:check  # 发布一致性自检
 
 ## 架构
 
-八层，依赖只能自上而下：几何底座 → 截面特性 → 连接 → 装配 → 生产 → 校核 → 输出 → 交互。详见 [docs/工业级范围与里程碑.md](docs/工业级范围与里程碑.md)。
+八层，依赖只能自上而下：几何底座 → 截面特性 → 连接 → 装配 → 生产 → 校核 → 输出 → 交互。
 
 ## 许可证
 
-[Apache-2.0](LICENSE)。第三方依赖许可证逐条登记于 [docs/第三方许可证.md](docs/第三方许可证.md)（当前仅 vendored three.js，MIT，全文随附）。
+[Apache-2.0](LICENSE)。第三方依赖当前仅 vendored three.js（MIT），许可证全文见 [src/serve/vendor/LICENSE](src/serve/vendor/LICENSE)。
 
-贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [AGENTS.md](AGENTS.md)。
+贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。
