@@ -8,7 +8,7 @@
  * - 只暴露已经实现的能力（当前为 L2 截面特性），不预留空命令。
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { startServe } from '../serve/server.ts';
 import type { SectionProperties } from '../geom/inertia.ts';
@@ -25,6 +25,7 @@ import { buildSectionReport, renderSectionReportMarkdown, serializeSectionValues
 import { DXF_PROVENANCE, sectionToDxf } from '../io/dxf.ts';
 import { MEMBER_DXF_PROVENANCE, memberDrawingsToDxf } from '../io/memberDxf.ts';
 import { MEMBER_PDF_PROVENANCE, memberDrawingsToPdf } from '../io/memberPdf.ts';
+import { STEP_PROVENANCE, frameToStep } from '../io/step.ts';
 import type { FrameInput, FrameModel } from '../frame/model.ts';
 import { FRAME_PROVENANCE, FrameInputError, buildFrame, parseFrameInput } from '../frame/model.ts';
 import type { Bom } from '../production/bom.ts';
@@ -111,10 +112,15 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
       几何 JSON 可带 "circles":[{"center":[x,y],"diameter":6.5}] 输出圆孔（端面孔位图）。
       不给 --out 则打印到 stdout。
 
-  mycad drawing [--json] [--out <path.dxf>] [--file <path|->]
-      输出杆件孔位图 DXF：每根杆一块，含顶面/侧面视图、孔位表与下料长度。
-      基准为 start 端物理端面；孔位来自连接规则引擎，不含公差与孔深。
-      --json 同时返回 legend（M1/M1-H1 到杆件原名的映射，DXF 内不写中文）。
+  mycad drawing [--json] [--out <path.dxf|path.pdf>] [--file <path|->]
+      输出杆件加工图：每根杆一块，含顶面/侧面视图、孔位表、基准、公差与表面粗糙度。
+      --out 以 .pdf 结尾输出 PDF 工程图（自动比例与分页），否则输出 DXF。
+      基准为 start 端物理端面；孔位来自连接规则引擎。
+      --json 同时返回 legend（M1/M1-H1 到杆件原名的映射，图内不写中文）。
+
+  mycad step [--json] --out <path.step> [--file <path|->]
+      输出框架 STEP（AP214，单位 mm）：每根杆按截面外轮廓与中心孔拉伸成实体。
+      斜切按方切近似，钻孔不扣除；非 ASCII 杆件名统一记为 M1..Mn。
 
   mycad serve [--port <n>] [--open]
       启动本地网页设计台（只监听 127.0.0.1，默认端口 8617）。--open 自动打开浏览器。
@@ -945,6 +951,8 @@ function cmdDrawing(args: readonly string[]): number {
             drillSource: pdf.drillSource,
             roughnessSource: pdf.roughnessSource,
             endSquarenessMm: pdf.endSquarenessMm,
+            endFlatnessMm: pdf.endFlatnessMm,
+            holeCylindricityMm: pdf.holeCylindricityMm,
             surfaceRoughnessRaUm: pdf.surfaceRoughnessRaUm,
             positionZoneMm: pdf.positionZoneMm,
             stats: pdf.stats,
@@ -985,6 +993,8 @@ function cmdDrawing(args: readonly string[]): number {
           drillSource: drawing.drillSource,
           roughnessSource: drawing.roughnessSource,
           endSquarenessMm: drawing.endSquarenessMm,
+          endFlatnessMm: drawing.endFlatnessMm,
+          holeCylindricityMm: drawing.holeCylindricityMm,
           surfaceRoughnessRaUm: drawing.surfaceRoughnessRaUm,
           positionZoneMm: drawing.positionZoneMm,
           stats: drawing.stats,
@@ -1008,6 +1018,49 @@ function cmdDrawing(args: readonly string[]): number {
     console.log(`一般公差：${drawing.toleranceNote}`);
     for (const warning of drawing.warnings) console.log(`警告：${warning}`);
     console.log(`边界：${MEMBER_DXF_PROVENANCE.disclaimer}`);
+  }
+  return EXIT.ok;
+}
+
+function cmdStep(args: readonly string[]): number {
+  const flags = parseFlags(args, { allowOut: true });
+  if (flags.out === null) {
+    fail('E_USAGE', '缺少 --out', '用法：mycad step --file frame.json --out frame.step');
+  }
+  const model = buildFrame(frameInputFromFlags(flags, 'step'));
+  const result = frameToStep(model, { fileName: basename(flags.out) });
+  writeTextFile(flags.out, result.text);
+
+  if (flags.json) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          command: 'step',
+          version: readVersion(),
+          out: flags.out,
+          bytes: result.text.length,
+          format: STEP_PROVENANCE.format,
+          units: 'mm',
+          solids: result.solids,
+          faces: result.faces,
+          points: result.points,
+          legend: result.legend,
+          warnings: result.warnings,
+          provenance: STEP_PROVENANCE,
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.log(`已写入 STEP：${flags.out}（${result.solids} 个实体，${result.faces} 个面，${result.points} 个点）`);
+    for (const warning of result.warnings) console.log(`警告：${warning}`);
+    console.log(`单位：${STEP_PROVENANCE.units}`);
+    console.log(`几何：${STEP_PROVENANCE.geometry}`);
+    for (const item of STEP_PROVENANCE.assumptions) console.log(`假设：${item}`);
+    for (const item of STEP_PROVENANCE.limitations) console.log(`局限：${item}`);
+    console.log(`边界：${STEP_PROVENANCE.disclaimer}`);
   }
   return EXIT.ok;
 }
@@ -1256,6 +1309,8 @@ function run(argv: readonly string[]): number {
       return cmdDxf(rest);
     case 'drawing':
       return cmdDrawing(rest);
+    case 'step':
+      return cmdStep(rest);
     case 'help':
       console.log(USAGE);
       return EXIT.ok;
@@ -1265,7 +1320,7 @@ function run(argv: readonly string[]): number {
       console.log(`mycad ${readVersion()}`);
       return EXIT.ok;
     default:
-      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、drawing、serve、bench、help、version');
+      fail('E_USAGE', `未知命令：${command}`, '可用命令：section、presets、report、frame、connect、check、bom、cut、dxf、drawing、step、serve、bench、help、version');
   }
 }
 
