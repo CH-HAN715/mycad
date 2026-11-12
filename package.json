@@ -39,7 +39,7 @@
     "release:check": "node scripts/check-release.mjs"
   },
   "devDependencies": {
-    "@types/node": "^24.10.1",
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   }
 }
