@@ -927,6 +927,7 @@ function cmdDrawing(args: readonly string[]): number {
           datum: MEMBER_DXF_PROVENANCE.datum,
           toleranceNote: drawing.toleranceNote,
           drillSource: drawing.drillSource,
+          positionZoneMm: drawing.positionZoneMm,
           stats: drawing.stats,
           memberLegend: drawing.memberLegend,
           holeLegend: drawing.holeLegend,

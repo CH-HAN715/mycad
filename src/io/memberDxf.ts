@@ -28,16 +28,17 @@ export const MEMBER_DXF_PROVENANCE = {
     '未启用 trim 时 cutLength 等于中心线长；启用后孔位仍按物理端面起算',
     '螺栓孔按公称直径画圆，钻孔直径按规则的 ISO 273 中系列公开表另列一栏，不画沉孔与锪面',
     '所有孔按通光通孔输出（CLR-THRU）；孔深列给出最小钻穿行程，顶/底面孔取截面高度、左/右面孔取宽度；不在本件攻丝，螺纹规格只约束配对槽螺母/嵌件',
+    '位置度区取孔位公差 ± 方差的保守内接圆：zone = 2 × tolHolePositionMm，放弃四角、面积保留 78.5%；若工艺单给的是直径区，应把 tolHolePositionMm 设为该直径的一半',
   ],
   limitations: [
-    '一般公差为注记量级（类比公开 ISO 2768 表）；逐尺寸公差带已给长度/孔位/孔深/角度，仍不含形位公差（位置度、平行度等）与表面粗糙度',
+    '一般公差为注记量级（类比公开 ISO 2768 表）；逐尺寸公差带已给长度/孔位/孔深/角度，位置度以图形化符号框给出，仍不含其他形位公差（平面度、垂直度、圆度等）与表面粗糙度',
     '不使用 DIMENSION 实体，尺寸以线段加文本近似，CAD 内取值须以文本为准',
     'DXF 内只用 ASCII 标签（M1/M1-H1），杆件原名只出现在返回的 legend 里，避免 R12 中文编码歧义',
     'T 接侧面孔按槽面螺栓近似，实物角件必须复核',
     '斜切只画切割平面轨迹与长短点尺寸；长点位于哪一侧由装配方向决定，须对照 3D 模型确认',
   ],
   disclaimer:
-    '本图是孔位与长度的加工参考图，不是可签收的下厂图纸；投产前必须补齐形位公差与表面粗糙度，并由工程师确认。',
+    '本图是孔位与长度的加工参考图，不是可签收的下厂图纸；投产前必须补齐其余形位公差与表面粗糙度，并由工程师确认。',
 } as const;
 
 export interface MemberDrawingOptions {
@@ -82,6 +83,8 @@ export interface MemberDrawingResult {
   readonly warnings: readonly string[];
   /** 图纸上实际写出的公差注记（已保证 ASCII）。 */
   readonly toleranceNote: string;
+  /** 位置度直径区，mm = 2 × tolHolePositionMm（± 方差的保守内接圆）。 */
+  readonly positionZoneMm: number;
   /** 钻孔直径表来源，随规则覆盖变化。 */
   readonly drillSource: string;
   readonly stats: {
@@ -106,6 +109,7 @@ const LAYER_CENTER = 'CENTER';
 const LAYER_TEXT = 'TEXT';
 const LAYER_DIM = 'DIM';
 const LAYER_DATUM = 'DATUM';
+const LAYER_GDT = 'GDT';
 /** 图纸排版常量，mm：不参与任何工程计算。 */
 const TITLE_ROW = 8;
 const VIEW_PAD = 16;
@@ -298,6 +302,28 @@ export function memberDrawingsToDxf(
         LAYER_DIM,
       ),
     );
+    down += 5;
+
+    // 位置度框：符号格（圆+十字）| 直径区 | A | B。R12 没有 GD&T 实体，符号与框用线段画。
+    const zoneMm = 2 * rules.tolHolePositionMm;
+    entities.push(text('ALL HOLES: POSITION (GD&T FRAME)', 0, down, TEXT_H, LAYER_DIM));
+    down += 4;
+    entities.push(...box(0, down, 38, 7, LAYER_GDT));
+    entities.push(vLine(8, down, down + 7, LAYER_GDT));
+    entities.push(vLine(22, down, down + 7, LAYER_GDT));
+    entities.push(vLine(30, down, down + 7, LAYER_GDT));
+    entities.push(circleEntity({ x: U.mm(4), y: U.mm(Y(down + 3.5)) }, 4, LAYER_GDT));
+    circles += 1;
+    entities.push(hLine(1, 7, down + 3.5, LAYER_GDT));
+    entities.push(vLine(4, down + 0.5, down + 6.5, LAYER_GDT));
+    entities.push(text(`%%c${zoneMm.toFixed(2)}`, 9, down + 4, TEXT_H - 0.6, LAYER_DIM));
+    entities.push(text('A', 23.5, down + 4, TEXT_H - 0.6, LAYER_DIM));
+    entities.push(text('B', 31.5, down + 4, TEXT_H - 0.6, LAYER_DIM));
+    down += 9;
+    entities.push(
+      text(`NOTE 3: ZONE %%c${zoneMm.toFixed(2)} = 2 x +/-${rules.tolHolePositionMm.toFixed(2)} (INSCRIBED CIRCLE OF +/- SQUARE; CONSERVATIVE)`, 0, down, TEXT_H, LAYER_DIM),
+    );
+    down += 5;
     down += TABLE_HEAD;
 
     entities.push(
@@ -391,6 +417,7 @@ export function memberDrawingsToDxf(
     warnings,
     toleranceNote,
     drillSource,
+    positionZoneMm: 2 * rules.tolHolePositionMm,
     stats: { members: model.members.length, holes: holeLegend.length, circles, texts },
   };
 }

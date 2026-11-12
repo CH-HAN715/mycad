@@ -106,7 +106,7 @@ describe('mycad memberDxf 孔位基准', () => {
     } as unknown as ConnectPlan;
     const out = memberDrawingsToDxf(model, fake);
     assert.equal(out.holeLegend[0]!.inBar, false);
-    assert.equal(out.stats.circles, 0);
+    assert.equal(out.stats.circles, 1, '仅剩位置度符号圆，越界孔不画');
     assert.match(out.warnings.join('\n'), /超出杆身/);
   });
 });
@@ -316,7 +316,53 @@ describe('mycad memberDxf 基准与孔深工艺口径', () => {
     assert.match(MEMBER_DXF_PROVENANCE.datum, /datum B/);
     assert.match(MEMBER_DXF_PROVENANCE.datum, /截面中心线/);
     assert.ok(MEMBER_DXF_PROVENANCE.assumptions.some((a) => a.includes('CLR-THRU')));
-    assert.ok(MEMBER_DXF_PROVENANCE.limitations.some((l) => l.includes('位置度')));
+    assert.ok(MEMBER_DXF_PROVENANCE.assumptions.some((a) => a.includes('内接圆')));
+    assert.ok(MEMBER_DXF_PROVENANCE.limitations.some((l) => l.includes('表面粗糙度')));
+  });
+});
+
+describe('mycad memberDxf 位置度标注', () => {
+  const entitiesOf = (dxf: string): { kind: string; g: Record<string, string> }[] => {
+    const lines = dxf.split('\n');
+    const out: { kind: string; g: Record<string, string> }[] = [];
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (lines[i] !== '0') continue;
+      const kind = lines[i + 1]!;
+      if (kind !== 'LINE' && kind !== 'CIRCLE' && kind !== 'TEXT') continue;
+      const g: Record<string, string> = {};
+      let j = i + 2;
+      for (; j < lines.length - 1 && lines[j] !== '0'; j += 2) g[lines[j]!] = lines[j + 1]!;
+      out.push({ kind, g });
+      i = j - 1;
+    }
+    return out;
+  };
+
+  it('每根杆画一个位置度框：符号圆、A/B 引用与 2x 换算的直径区', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.dxf, /ALL HOLES: POSITION \(GD&T FRAME\)/);
+    assert.match(out.dxf, /%%c0\.40/);
+    assert.match(out.dxf, /NOTE 3: ZONE %%c0\.40 = 2 x \+\/-0\.20 \(INSCRIBED CIRCLE OF \+\/- SQUARE; CONSERVATIVE\)/);
+    assert.equal(out.positionZoneMm, 0.4);
+    const entities = entitiesOf(out.dxf);
+    const gdtCircles = entities.filter((e) => e.kind === 'CIRCLE' && e.g['8'] === 'GDT');
+    const gdtLines = entities.filter((e) => e.kind === 'LINE' && e.g['8'] === 'GDT');
+    assert.equal(gdtCircles.length, model.members.length, '每根杆一个位置度符号圆');
+    assert.equal(gdtLines.length, 9 * model.members.length, '框体 4 + 分隔 3 + 十字 2');
+    assert.ok(gdtCircles.every((c) => Number(c.g['40']) === 2), '符号圆半径 2mm');
+  });
+
+  it('覆盖孔位公差时位置度区与注记同步变化', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(
+      model,
+      planConnections(model, { rules: { tolHolePositionMm: 0.1 } }),
+    );
+    assert.equal(out.positionZoneMm, 0.2);
+    assert.match(out.dxf, /%%c0\.20/);
+    assert.match(out.dxf, /NOTE 3: ZONE %%c0\.20 = 2 x \+\/-0\.10/);
+    assert.doesNotMatch(out.dxf, /%%c0\.40/);
   });
 });
 
