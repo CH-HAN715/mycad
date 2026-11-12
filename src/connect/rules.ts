@@ -57,6 +57,10 @@ export interface ConnectRules {
   readonly tolAngleDeg: number;
   /** 方切端面对基准 B 的垂直度公差，mm。 */
   readonly tolEndSquarenessMm: number;
+  /** 端面（锯切/铣削面）平面度公差，mm。 */
+  readonly tolEndFlatnessMm: number;
+  /** 钻孔孔壁圆柱度公差，mm。 */
+  readonly tolHoleCylindricityMm: number;
   /** 加工面表面粗糙度 Ra，um。 */
   readonly surfaceRoughnessRaUm: number;
   /** 表面粗糙度数值的来源标注，必须出现在输出里。 */
@@ -101,6 +105,9 @@ export const DEFAULT_CONNECT_RULES: ConnectRules = {
   tolAngleDeg: 0.2,
   // 垂直度与 Ra 均为工程惯例量级：机加工铝型材常见 Ra 3.2，方切端面按孔位公差同档给 0.2。
   tolEndSquarenessMm: 0.2,
+  // 端面平面度紧于垂直度（0.1 ⊂ 0.2）；钻孔孔壁圆柱度按钻削工艺惯例取 0.05。
+  tolEndFlatnessMm: 0.1,
+  tolHoleCylindricityMm: 0.05,
   surfaceRoughnessRaUm: 3.2,
   threadClass: '6H',
   roughnessSource:
@@ -167,6 +174,8 @@ export function parseRulesOverride(raw: unknown): ConnectRules {
     'tolHoleDepthMm',
     'tolAngleDeg',
     'tolEndSquarenessMm',
+    'tolEndFlatnessMm',
+    'tolHoleCylindricityMm',
     'surfaceRoughnessRaUm',
   ] as const;
   for (const key of numericKeys) {

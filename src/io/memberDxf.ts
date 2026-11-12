@@ -32,10 +32,11 @@ export const MEMBER_DXF_PROVENANCE = {
     '所有孔按通光通孔输出（CLR-THRU）；孔深列给出最小钻穿行程，顶/底面孔取截面高度、左/右面孔取宽度；不在本件攻丝，螺纹规格只约束配对槽螺母/嵌件',
     '位置度区取孔位公差 ± 方差的保守内接圆：zone = 2 × tolHolePositionMm，放弃四角、面积保留 78.5%；若工艺单给的是直径区，应把 tolHolePositionMm 设为该直径的一半',
     '方切端面按垂直度框（⊥ 0.20 对基准 B）输出，数值来自 tolEndSquarenessMm；两端均斜切时不出框，只保留斜切角度公差',
+    '端面平面度与孔壁圆柱度各出一框（无基准引用），数值来自 tolEndFlatnessMm / tolHoleCylindricityMm；型材直线度与挤出面状态归供应商，图内只注明不覆盖',
     '表面粗糙度以勾形符号加 Ra 数值给出（符号为线段拼的近似，非标准符号实体）；Ra 与来源由 surfaceRoughnessRaUm / roughnessSource 控制，型材挤出面与锯切端面不在其覆盖范围',
   ],
   limitations: [
-    '一般公差为注记量级（类比公开 ISO 2768 表）；逐尺寸公差带已给长度/孔位/孔深/角度，位置度与端面垂直度以图形化符号框给出，表面粗糙度以 Ra 注记给出；仍不含平面度、圆度、同轴度等其余形位公差',
+    '一般公差为注记量级（类比公开 ISO 2768 表）；逐尺寸公差带已给长度/孔位/孔深/角度，位置度、端面垂直度、端面平面度与孔壁圆柱度以图形化符号框给出，表面粗糙度以 Ra 注记给出；仍不含同轴度、独立圆度、线/面轮廓度等其余形位公差',
     '不使用 DIMENSION 实体，尺寸以线段加文本近似，CAD 内取值须以文本为准',
     'DXF 内只用 ASCII 标签（M1/M1-H1），杆件原名只出现在返回的 legend 里，避免 R12 中文编码歧义',
     'T 接侧面孔按槽面螺栓近似，实物角件必须复核',
@@ -66,6 +67,10 @@ export interface MemberDrawingResult {
   readonly roughnessSource: string;
   /** 方切端面对基准 B 的垂直度，mm。 */
   readonly endSquarenessMm: number;
+  /** 端面平面度，mm。 */
+  readonly endFlatnessMm: number;
+  /** 孔壁圆柱度，mm。 */
+  readonly holeCylindricityMm: number;
   /** 加工面表面粗糙度 Ra，um。 */
   readonly surfaceRoughnessRaUm: number;
   readonly stats: {
@@ -110,6 +115,8 @@ export function memberDrawingsToDxf(
     drillSource: layout.drillSource,
     roughnessSource: layout.roughnessSource,
     endSquarenessMm: layout.endSquarenessMm,
+    endFlatnessMm: layout.endFlatnessMm,
+    holeCylindricityMm: layout.holeCylindricityMm,
     surfaceRoughnessRaUm: layout.surfaceRoughnessRaUm,
     positionZoneMm: layout.positionZoneMm,
     stats: layout.stats,

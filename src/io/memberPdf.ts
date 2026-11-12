@@ -24,7 +24,7 @@ export const MEMBER_PDF_PROVENANCE = {
     'PDF 使用紧凑排版（正文 2.5mm、行距 4mm）；DXF 保持 3.2mm/5mm，两者版式同源但字号不同',
   ],
   limitations: [
-    '已给位置度与方切端面垂直度（图形化符号框）、表面粗糙度 Ra 注记；仍不含平面度、圆度、同轴度等其余形位公差',
+    '已给位置度、方切端面垂直度、端面平面度与孔壁圆柱度（图形化符号框）、表面粗糙度 Ra 注记；仍不含同轴度、独立圆度、轮廓度等其余形位公差',
     '未嵌入字体：只保证 ASCII 文本的显示一致性',
     '未做标题栏签收区与公司图框定制',
   ],
@@ -54,6 +54,10 @@ export interface MemberPdfResult {
   readonly roughnessSource: string;
   /** 方切端面对基准 B 的垂直度，mm。 */
   readonly endSquarenessMm: number;
+  /** 端面平面度，mm。 */
+  readonly endFlatnessMm: number;
+  /** 孔壁圆柱度，mm。 */
+  readonly holeCylindricityMm: number;
   /** 加工面表面粗糙度 Ra，um。 */
   readonly surfaceRoughnessRaUm: number;
   readonly positionZoneMm: number;
@@ -264,6 +268,8 @@ export function memberDrawingsToPdf(
     drillSource: layout.drillSource,
     roughnessSource: layout.roughnessSource,
     endSquarenessMm: layout.endSquarenessMm,
+    endFlatnessMm: layout.endFlatnessMm,
+    holeCylindricityMm: layout.holeCylindricityMm,
     surfaceRoughnessRaUm: layout.surfaceRoughnessRaUm,
     positionZoneMm: layout.positionZoneMm,
     stats: layout.stats,

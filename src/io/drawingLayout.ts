@@ -126,6 +126,10 @@ export interface LayoutResult {
   readonly roughnessSource: string;
   /** 方切端面对基准 B 的垂直度，mm。 */
   readonly endSquarenessMm: number;
+  /** 端面平面度，mm。 */
+  readonly endFlatnessMm: number;
+  /** 孔壁圆柱度，mm。 */
+  readonly holeCylindricityMm: number;
   /** 加工面表面粗糙度 Ra，um。 */
   readonly surfaceRoughnessRaUm: number;
   readonly blocks: readonly LayoutBlock[];
@@ -358,29 +362,67 @@ export function layoutMemberDrawings(
     text(`NOTE 3: ZONE %%c${zoneMm.toFixed(2)} = 2 x +/-${rules.tolHolePositionMm.toFixed(2)} (INSCRIBED CIRCLE OF +/- SQUARE; CONSERVATIVE)`, 0, down, t.textH, LAYER_DIM);
     down += t.rowStep;
 
-    // 端面垂直度：只对方切端面成立；两端都斜切时没有可引用的方端面，改注角度公差。
+    // 端面与孔壁的其余形位公差：三框并排，压住版面高度，避免 A4 被迫升 A3。
     const miteredEnds = new Set(miters.map((cut) => cut.end));
     const hasSquareEnd = !miteredEnds.has('start') || !miteredEnds.has('end');
     const squarenessMm = rules.tolEndSquarenessMm;
+    const flatnessMm = rules.tolEndFlatnessMm;
+    const cylindricityMm = rules.tolHoleCylindricityMm;
+    text(
+      hasSquareEnd
+        ? 'GD&T (L TO R): END PERPENDICULARITY | END FLATNESS | HOLE CYLINDRICITY'
+        : 'GD&T (L TO R): END FLATNESS | HOLE CYLINDRICITY (PERPENDICULARITY N/A)',
+      0,
+      down,
+      t.textH,
+      LAYER_DIM,
+    );
+    down += t.rowStep - 1;
+    const formTop = down;
+    let frameX = 0;
     if (hasSquareEnd) {
-      text('SQUARE ENDS: PERPENDICULARITY (GD&T FRAME)', 0, down, t.textH, LAYER_DIM);
-      down += t.rowStep - 1;
-      const perpTop = down;
-      box(0, perpTop, 28, 7, LAYER_GDT);
-      vLine(8, perpTop, perpTop + 7, LAYER_GDT);
-      vLine(20, perpTop, perpTop + 7, LAYER_GDT);
+      box(frameX, formTop, 28, 7, LAYER_GDT);
+      vLine(frameX + 8, formTop, formTop + 7, LAYER_GDT);
+      vLine(frameX + 20, formTop, formTop + 7, LAYER_GDT);
       // 垂直度符号：横底边 + 竖笔画（⊥）。R12 与 PDF 都没有 GD&T 实体，用线段拼。
-      hLine(2, 6, perpTop + 5.5, LAYER_GDT);
-      vLine(4, perpTop + 1.5, perpTop + 5.5, LAYER_GDT);
-      text(squarenessMm.toFixed(2), 9.5, perpTop + 4, t.textH - 0.6, LAYER_DIM);
-      text('B', 21.5, perpTop + 4, t.textH - 0.6, LAYER_DIM);
-      down = perpTop + 7 + t.textH + 1.2;
-      text(`NOTE 4: SQUARE-CUT END FACE PERPENDICULAR TO DATUM B WITHIN ${squarenessMm.toFixed(2)} (ENGINEERING PRACTICE, NOT A STANDARD CLAUSE)`, 0, down, t.textH, LAYER_DIM);
-      down += t.rowStep;
-    } else {
-      text(`NOTE 4: BOTH ENDS MITERED; END-FACE PERPENDICULARITY N/A, SEE MITER ANGLE TOL +/-${rules.tolAngleDeg.toFixed(1)}`, 0, down, t.textH, LAYER_DIM);
-      down += t.rowStep;
+      hLine(frameX + 2, frameX + 6, formTop + 5.5, LAYER_GDT);
+      vLine(frameX + 4, formTop + 1.5, formTop + 5.5, LAYER_GDT);
+      text(squarenessMm.toFixed(2), frameX + 9.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+      text('B', frameX + 21.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+      frameX += 38;
     }
+    // 平面度：平行四边形符号 + 公差值，无基准格。
+    box(frameX, formTop, 24, 7, LAYER_GDT);
+    vLine(frameX + 8, formTop, formTop + 7, LAYER_GDT);
+    sink.line(frameX + 1.5, Y(formTop + 5.5), frameX + 5.5, Y(formTop + 5.5), LAYER_GDT);
+    sink.line(frameX + 5.5, Y(formTop + 5.5), frameX + 6.5, Y(formTop + 1.5), LAYER_GDT);
+    sink.line(frameX + 6.5, Y(formTop + 1.5), frameX + 2.5, Y(formTop + 1.5), LAYER_GDT);
+    sink.line(frameX + 2.5, Y(formTop + 1.5), frameX + 1.5, Y(formTop + 5.5), LAYER_GDT);
+    text(flatnessMm.toFixed(2), frameX + 9.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+    frameX += 34;
+    // 圆柱度：圆加两条平行切线 + 公差值，无基准格。
+    box(frameX, formTop, 32, 7, LAYER_GDT);
+    vLine(frameX + 10, formTop, formTop + 7, LAYER_GDT);
+    sink.circle(frameX + 5, Y(formTop + 3.5), 4, LAYER_GDT);
+    circles += 1;
+    hLine(frameX + 2.5, frameX + 7.5, formTop + 1.5, LAYER_GDT);
+    hLine(frameX + 2.5, frameX + 7.5, formTop + 5.5, LAYER_GDT);
+    text(cylindricityMm.toFixed(2), frameX + 11.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+    down = formTop + 7 + t.textH + 1.2;
+    text(
+      hasSquareEnd
+        ? `NOTE 4: SQUARE-CUT END FACE PERPENDICULAR TO DATUM B WITHIN ${squarenessMm.toFixed(2)} (ENGINEERING PRACTICE, NOT A STANDARD CLAUSE)`
+        : `NOTE 4: BOTH ENDS MITERED; END-FACE PERPENDICULARITY N/A, SEE MITER ANGLE TOL +/-${rules.tolAngleDeg.toFixed(1)}`,
+      0,
+      down,
+      t.textH,
+      LAYER_DIM,
+    );
+    down += t.rowStep;
+    text(`NOTE 5: END FACE FLATNESS ${flatnessMm.toFixed(2)} (NO DATUM); HOLE WALL CYLINDRICITY ${cylindricityMm.toFixed(2)} (NO DATUM; ENGINEERING PRACTICE, NOT A STANDARD CLAUSE)`, 0, down, t.textH, LAYER_DIM);
+    down += t.rowStep;
+    text(`NOTE 6: EXTRUSION STRAIGHTNESS AND AS-EXTRUDED SURFACE ARE SUPPLIER'S, NOT COVERED BY THIS DRAWING`, 0, down, t.textH, LAYER_DIM);
+    down += t.rowStep;
 
     // 表面粗糙度：ISO 1302 风格勾形符号（线段拼，非标准符号实体），数值在右侧。
     const raUm = rules.surfaceRoughnessRaUm;
@@ -499,6 +541,8 @@ export function layoutMemberDrawings(
     drillSource,
     roughnessSource,
     endSquarenessMm: rules.tolEndSquarenessMm,
+    endFlatnessMm: rules.tolEndFlatnessMm,
+    holeCylindricityMm: rules.tolHoleCylindricityMm,
     surfaceRoughnessRaUm: rules.surfaceRoughnessRaUm,
     positionZoneMm: 2 * rules.tolHolePositionMm,
     blocks,

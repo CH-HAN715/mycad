@@ -67,6 +67,14 @@ describe('L3 规则表', () => {
     assert.throws(() => parseRulesOverride({ surfaceRoughnessRaUm: -3.2 }), /正的有限数/);
     assert.throws(() => parseRulesOverride({ roughnessSource: ' ' }), /非空字符串/);
   });
+
+  it('平面度与圆柱度可覆盖，非正数拒绝', () => {
+    const merged = parseRulesOverride({ tolEndFlatnessMm: 0.05, tolHoleCylindricityMm: 0.02 });
+    assert.equal(merged.tolEndFlatnessMm, 0.05);
+    assert.equal(merged.tolHoleCylindricityMm, 0.02);
+    assert.throws(() => parseRulesOverride({ tolEndFlatnessMm: 0 }), /正的有限数/);
+    assert.throws(() => parseRulesOverride({ tolHoleCylindricityMm: -0.05 }), /正的有限数/);
+  });
 });
 
 describe('L3 角接（corner）', () => {
