@@ -32,7 +32,7 @@ pnpm cli drawing --file frame.json --out members.dxf
 # 标准工况校核（输入为工况 JSON，见 help）
 pnpm cli check --file case.json
 
-# 本地网页设计台（仅监听 127.0.0.1，含 3D 预览）
+# 本地网页设计台（仅监听 127.0.0.1，含 3D 预览；输入自动保存，重开恢复）
 pnpm cli serve
 ```
 
