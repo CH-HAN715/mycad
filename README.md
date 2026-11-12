@@ -30,6 +30,7 @@ pnpm cli frame --file frame.json
 pnpm cli connect --file frame.json
 pnpm cli bom --file frame.json --stock 6000 --kerf 3
 pnpm cli drawing --file frame.json --out members.dxf
+pnpm cli drawing --file frame.json --out members.pdf   # A4/A3 横向，自动比例与分页
 
 # 标准工况校核（输入为工况 JSON，见 help）
 pnpm cli check --file case.json

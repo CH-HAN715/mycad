@@ -24,6 +24,7 @@ import { UNIT_SCHEMA } from '../geom/units.ts';
 import { buildSectionReport, renderSectionReportMarkdown, serializeSectionValues } from '../report/sectionReport.ts';
 import { DXF_PROVENANCE, sectionToDxf } from '../io/dxf.ts';
 import { MEMBER_DXF_PROVENANCE, memberDrawingsToDxf } from '../io/memberDxf.ts';
+import { MEMBER_PDF_PROVENANCE, memberDrawingsToPdf } from '../io/memberPdf.ts';
 import type { FrameInput, FrameModel } from '../frame/model.ts';
 import { FRAME_PROVENANCE, FrameInputError, buildFrame, parseFrameInput } from '../frame/model.ts';
 import type { Bom } from '../production/bom.ts';
@@ -595,6 +596,16 @@ function writeTextFile(path: string, text: string): void {
   }
 }
 
+function writeBinaryFile(path: string, bytes: Uint8Array): void {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, bytes);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    fail('E_OUTPUT', `无法写入文件：${path}`, reason);
+  }
+}
+
 function cmdReport(args: readonly string[]): number {
   const flags = parseFlags(args, { allowOut: true });
   const input = resolveSectionInput(flags);
@@ -912,6 +923,48 @@ function cmdDrawing(args: readonly string[]): number {
   const { frame, options } = parseConnectInput(raw);
   const model = buildFrame(frame);
   const plan = planConnections(model, options);
+
+  if (flags.out !== null && /\.pdf$/i.test(flags.out)) {
+    const pdf = memberDrawingsToPdf(model, plan);
+    writeBinaryFile(flags.out, pdf.bytes);
+    if (flags.json) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            command: 'drawing',
+            version: readVersion(),
+            outFormat: 'pdf',
+            format: MEMBER_PDF_PROVENANCE.format,
+            units: 'mm',
+            pages: pdf.pages,
+            bytes: pdf.bytes.length,
+            blocks: pdf.blocks,
+            datum: MEMBER_DXF_PROVENANCE.datum,
+            toleranceNote: pdf.toleranceNote,
+            drillSource: pdf.drillSource,
+            positionZoneMm: pdf.positionZoneMm,
+            stats: pdf.stats,
+            memberLegend: pdf.memberLegend,
+            holeLegend: pdf.holeLegend,
+            warnings: pdf.warnings,
+            provenance: MEMBER_PDF_PROVENANCE,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(
+        `已写入杆件工程图 PDF：${flags.out}（${pdf.stats.members} 根杆件，${pdf.stats.holes} 个孔，${pdf.pages} 页）`,
+      );
+      console.log(`比例：${pdf.blocks.map((b) => `${b.memberLabel}=${b.scaleLabel}/P${b.page}`).join('  ')}`);
+      for (const warning of pdf.warnings) console.log(`警告：${warning}`);
+      console.log(`边界：${MEMBER_PDF_PROVENANCE.disclaimer}`);
+    }
+    return EXIT.ok;
+  }
+
   const drawing = memberDrawingsToDxf(model, plan);
 
   if (flags.out !== null) writeTextFile(flags.out, drawing.dxf);
