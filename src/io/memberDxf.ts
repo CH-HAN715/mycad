@@ -16,7 +16,7 @@ export const MEMBER_DXF_PROVENANCE = {
   entities: ['LINE', 'CIRCLE', 'TEXT'],
   units: 'mm',
   datum:
-    '每根杆件的 x=0 取 start 端下料后的物理端面，x 增大指向 end 端；孔位为距该端面的距离',
+    'datum A 取每根杆件 start 端下料后的物理端面（x=0），x 增大指向 end 端，孔位 X 均以 A 起算；datum B 取各视图的截面中心线，横向孔位均以 B 起算',
   views: [
     '顶面视图（TOP VIEW）：承载 top/bottom 面的孔，横向为截面局部 u',
     '侧面视图（SIDE VIEW）：承载 left/right 面的孔，横向为截面局部 v',
@@ -27,17 +27,17 @@ export const MEMBER_DXF_PROVENANCE = {
     '孔位来自 L3 规则引擎的角件近似（端距 + 等间距展开），不是零件厂商的实际孔型',
     '未启用 trim 时 cutLength 等于中心线长；启用后孔位仍按物理端面起算',
     '螺栓孔按公称直径画圆，钻孔直径按规则的 ISO 273 中系列公开表另列一栏，不画沉孔与锪面',
-    '一期所有孔按通孔输出（DEPTH=THRU），不做盲孔与攻丝深度决策',
+    '所有孔按通光通孔输出（CLR-THRU）；孔深列给出最小钻穿行程，顶/底面孔取截面高度、左/右面孔取宽度；不在本件攻丝，螺纹规格只约束配对槽螺母/嵌件',
   ],
   limitations: [
-    '一般公差只给注记量级（类比公开 ISO 2768 表），不含逐尺寸公差带、形位公差与表面粗糙度',
+    '一般公差为注记量级（类比公开 ISO 2768 表）；逐尺寸公差带已给长度/孔位/孔深/角度，仍不含形位公差（位置度、平行度等）与表面粗糙度',
     '不使用 DIMENSION 实体，尺寸以线段加文本近似，CAD 内取值须以文本为准',
     'DXF 内只用 ASCII 标签（M1/M1-H1），杆件原名只出现在返回的 legend 里，避免 R12 中文编码歧义',
     'T 接侧面孔按槽面螺栓近似，实物角件必须复核',
     '斜切只画切割平面轨迹与长短点尺寸；长点位于哪一侧由装配方向决定，须对照 3D 模型确认',
   ],
   disclaimer:
-    '本图是孔位与长度的加工参考图，不是可签收的下厂图纸；投产前必须补齐公差、孔深与工艺，并由工程师确认。',
+    '本图是孔位与长度的加工参考图，不是可签收的下厂图纸；投产前必须补齐形位公差与表面粗糙度，并由工程师确认。',
 } as const;
 
 export interface MemberDrawingOptions {
@@ -105,6 +105,7 @@ function asciiOnly(value: string): string {
 const LAYER_CENTER = 'CENTER';
 const LAYER_TEXT = 'TEXT';
 const LAYER_DIM = 'DIM';
+const LAYER_DATUM = 'DATUM';
 /** 图纸排版常量，mm：不参与任何工程计算。 */
 const TITLE_ROW = 8;
 const VIEW_PAD = 16;
@@ -207,19 +208,32 @@ export function memberDrawingsToDxf(
     entities.push(text(`${memberLabel}  CUT=${num(length)}  SECTION=${num(width)}x${num(height)}`, 0, down, TITLE_H, LAYER_TEXT));
     down += TITLE_ROW;
     entities.push(
-      text(`TRIM ${num(member.trimStart)} / ${num(member.trimEnd)}   DATUM: START FACE, x=0   HOLES: ${holes.length}`, 0, down, TEXT_H, LAYER_TEXT),
+      text(`TRIM ${num(member.trimStart)} / ${num(member.trimEnd)}   DATUM A: START FACE (x=0)   DATUM B: SECTION CENTERLINE   HOLES: ${holes.length}`, 0, down, TEXT_H, LAYER_TEXT),
     );
     down += TITLE_ROW;
+
+    // 基准标注：A = start 端面，B = 截面中心线。R12 没有形位公差符号，用引线加标签表达。
+    const datumTags = (viewTop: number, viewSize: number): string[] => {
+      const base = viewTop + viewSize;
+      return [
+        lineEntity(-14, Y(base + 6), 0, Y(base), LAYER_DATUM),
+        ...box(-14, base + 6, 27, 5, LAYER_DATUM),
+        text('DATUM A', -13, base + 7.2, TEXT_H - 0.8, LAYER_DATUM),
+        text('DATUM B', length + 6, viewTop + viewSize / 2 + 1.2, TEXT_H - 0.8, LAYER_DATUM),
+      ];
+    };
 
     const topViewAt = down;
     entities.push(...box(0, topViewAt, length, width, layer));
     entities.push(hLine(0, length, topViewAt + width / 2, LAYER_CENTER));
+    entities.push(...datumTags(topViewAt, width));
     entities.push(text('TOP VIEW', length + 6, topViewAt, TEXT_H, LAYER_TEXT));
     down = topViewAt + width + VIEW_GAP;
 
     const sideViewAt = down;
     entities.push(...box(0, sideViewAt, length, height, layer));
     entities.push(hLine(0, length, sideViewAt + height / 2, LAYER_CENTER));
+    entities.push(...datumTags(sideViewAt, height));
     entities.push(text('SIDE VIEW', length + 6, sideViewAt, TEXT_H, LAYER_TEXT));
     down = sideViewAt + height + DIM_ROW;
 
@@ -268,6 +282,14 @@ export function memberDrawingsToDxf(
     entities.push(text(`DRILL TABLE: ${drillSource}`, 0, down, TEXT_H, LAYER_DIM));
     down += 5;
     entities.push(
+      text('NOTE 1: ALL HOLES CLR (CLEARANCE), THRU; DEPTH CELL THRU(<D>) = MIN DRILL TRAVEL THROUGH SECTION', 0, down, TEXT_H, LAYER_DIM),
+    );
+    down += 5;
+    entities.push(
+      text(`NOTE 2: THREAD ${asciiOnly(rules.threadClass) || 'UNSPECIFIED'} APPLIES TO MATING SLOT NUT/INSERT, NOT THIS PART`, 0, down, TEXT_H, LAYER_DIM),
+    );
+    down += 5;
+    entities.push(
       text(
         `TOL: LENGTH +/-${tolLength(stockLength, rules).toFixed(2)}  HOLE POS +/-${rules.tolHolePositionMm.toFixed(2)}  DEPTH +/-${rules.tolHoleDepthMm.toFixed(2)}  ANGLE +/-${rules.tolAngleDeg.toFixed(1)}  THREAD ${asciiOnly(rules.threadClass) || 'UNSPECIFIED'}  SRC: ${asciiOnly(rules.toleranceSource) || 'NOT STATED'}`,
         0,
@@ -307,7 +329,8 @@ export function memberDrawingsToDxf(
       });
 
       const drillCell = hole.clearanceDrillMm === null ? 'TBD' : hole.clearanceDrillMm.toFixed(1);
-      const depthCell = hole.depthMm === null ? 'THRU' : hole.depthMm.toFixed(1);
+      const travel = isTopFace ? height : width;
+      const depthCell = hole.depthMm === null ? `THRU(${travel.toFixed(1)})` : hole.depthMm.toFixed(1);
       entities.push(
         text(
           `${holeLabel.padEnd(8)} ${hole.face.toUpperCase().padEnd(8)} ${num(along).padStart(8)}  ${num(hole.diameterMm).padStart(5)}  ${drillCell.padStart(5)}  ${depthCell.padStart(6)}  ${hole.boltSeries.padEnd(6)} ${hole.boltAxis.toUpperCase().padEnd(5)} +/-${rules.tolHolePositionMm.toFixed(2)}`,

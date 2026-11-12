@@ -249,6 +249,77 @@ describe('mycad memberDxf 长度公差分档', () => {
   });
 });
 
+describe('mycad memberDxf 基准与孔深工艺口径', () => {
+  const P40x20 = {
+    id: 'p',
+    spec: {
+      width: 40,
+      height: 20,
+      slot: { opening: 6.15, depth: 4.5, headWidth: 9, headStart: 2 },
+      bore: { radius: 2.5 },
+    },
+  };
+  const frameOf = (members: unknown[]): ReturnType<typeof buildFrame> =>
+    buildFrame(parseFrameInput({ profiles: [P40x20], members }));
+
+  it('datum A/B 标签在两个视图各一处，表头同时声明 A/B 定义', () => {
+    const model = frameOf([{ id: 'A', profileId: 'p', start: [0, 0, 0], end: [600, 0, 0] }]);
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    const labelCount = (label: string): number =>
+      out.dxf.split('\n').filter((line) => line === label).length;
+    assert.equal(labelCount('DATUM A'), 2, '顶面与侧面视图各一处 A');
+    assert.equal(labelCount('DATUM B'), 2, '顶面与侧面视图各一处 B');
+    assert.match(out.dxf, /DATUM A: START FACE \(x=0\)\s+DATUM B: SECTION CENTERLINE/);
+  });
+
+  it('孔深行程按视图方向取截面尺寸：左/右面孔取宽 40，顶/底面孔取高 20', () => {
+    // 手算：x-z 角接中，沿 x 的杆孔落在左/右面（u 面），行程 = 截面宽 40；
+    // 沿 z 的杆孔落在顶/底面（v 面），行程 = 截面高 20。
+    const xz = frameOf([
+      { id: 'A', profileId: 'p', start: [0, 0, 0], end: [600, 0, 0] },
+      { id: 'B', profileId: 'p', start: [0, 0, 0], end: [0, 0, 750] },
+    ]);
+    const xzOut = memberDrawingsToDxf(xz, planConnections(xz));
+    const a = xzOut.holeLegend.filter((h) => h.memberId === 'A');
+    const b = xzOut.holeLegend.filter((h) => h.memberId === 'B');
+    assert.ok(a.length > 0 && b.length > 0);
+    assert.ok(a.every((h) => h.face === 'left' || h.face === 'right'));
+    assert.ok(b.every((h) => h.face === 'top' || h.face === 'bottom'));
+    assert.match(xzOut.dxf, /M1-H1\s+.*THRU\(40\.0\)/);
+    assert.match(xzOut.dxf, /M2-H1\s+.*THRU\(20\.0\)/);
+
+    // 手算：x-y 角接的螺栓轴为 z，两杆孔都在顶/底面，行程统一取截面高 20。
+    const xy = frameOf([
+      { id: 'A', profileId: 'p', start: [0, 0, 0], end: [600, 0, 0] },
+      { id: 'B', profileId: 'p', start: [0, 0, 0], end: [0, 600, 0] },
+    ]);
+    const xyOut = memberDrawingsToDxf(xy, planConnections(xy));
+    assert.ok(xyOut.holeLegend.length > 0);
+    assert.ok(xyOut.holeLegend.every((h) => h.face === 'top' || h.face === 'bottom'));
+    assert.match(xyOut.dxf, /THRU\(20\.0\)/);
+    assert.doesNotMatch(xyOut.dxf, /THRU\(40\.0\)/);
+  });
+
+  it('工艺注记声明通孔口径与螺纹归属，螺纹等级随规则覆盖变化', () => {
+    const model = exampleFrame();
+    const out = memberDrawingsToDxf(model, planConnections(model));
+    assert.match(out.dxf, /NOTE 1: ALL HOLES CLR \(CLEARANCE\), THRU/);
+    assert.match(out.dxf, /NOTE 2: THREAD 6H APPLIES TO MATING SLOT NUT\/INSERT, NOT THIS PART/);
+    const overridden = memberDrawingsToDxf(
+      model,
+      planConnections(model, { rules: { threadClass: '6G' } }),
+    );
+    assert.match(overridden.dxf, /NOTE 2: THREAD 6G APPLIES/);
+  });
+
+  it('provenance 记录基准定义、通孔口径与未覆盖的形位公差', () => {
+    assert.match(MEMBER_DXF_PROVENANCE.datum, /datum B/);
+    assert.match(MEMBER_DXF_PROVENANCE.datum, /截面中心线/);
+    assert.ok(MEMBER_DXF_PROVENANCE.assumptions.some((a) => a.includes('CLR-THRU')));
+    assert.ok(MEMBER_DXF_PROVENANCE.limitations.some((l) => l.includes('位置度')));
+  });
+});
+
 describe('mycad memberDxf 端盖注记', () => {
   it('自由端在图上写出 END CAP 与截面尺寸', () => {
     const model = exampleFrame([
