@@ -4,7 +4,7 @@
 
 工业级铝型材框架设计引擎 · agent-first CLI。
 
-自算截面特性 → 框架求解 → 连接件选型 → 强度/挠度校核 → BOM / 定尺下料 / DXF 图纸，一条命令行流水线。几何与计算引擎零运行时第三方依赖，每个工程量可追溯到公式、输入、单位与来源。
+自算截面特性 → 框架求解 → 连接件选型 → 强度/挠度校核 → BOM / 定尺下料 / DXF 图纸，一条命令行流水线。几何与计算引擎零运行时第三方依赖（STEP 钻孔可选使用 manifold-3d，仅在该命令中加载），每个工程量可追溯到公式、输入、单位与来源。
 
 ## 状态声明（请先读这段）
 
@@ -32,6 +32,7 @@ pnpm cli bom --file frame.json --stock 6000 --kerf 3
 pnpm cli drawing --file frame.json --out members.dxf
 pnpm cli drawing --file frame.json --out members.pdf   # A4/A3 横向，自动比例与分页
 pnpm cli step --file frame.json --out frame.step       # STEP AP214，按截面拉伸（可带 45° 斜切端）
+pnpm cli step --file frame.json --out frame.step --holes  # 用 manifold-3d 布尔扣除钻孔
 
 # 标准工况校核（输入为工况 JSON，见 help）
 pnpm cli check --file case.json
@@ -62,4 +63,4 @@ pnpm release:check  # 发布一致性自检
 
 ## 许可证
 
-[Apache-2.0](LICENSE)。第三方依赖当前仅 vendored three.js（MIT），许可证全文见 [src/serve/vendor/LICENSE](src/serve/vendor/LICENSE)。
+[Apache-2.0](LICENSE)。第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；浏览器预览内 vendored three.js（MIT）全文见 [src/serve/vendor/LICENSE](src/serve/vendor/LICENSE)。

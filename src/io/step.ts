@@ -47,6 +47,12 @@ export interface StepEntityRow {
   readonly cutLengthMm: number;
 }
 
+/** 已完成的三角网格实体（世界坐标、外法向绕序已校正）。 */
+export interface MeshSolid {
+  readonly positions: Float32Array;
+  readonly tris: Uint32Array;
+}
+
 export interface StepExportOptions {
   /** HEADER 中的文件名；默认 mycad-frame.step。 */
   readonly fileName?: string;
@@ -56,6 +62,12 @@ export interface StepExportOptions {
   readonly date?: string;
   /** 连接方案：提供时按其中的 45° 斜切修改端面；不给则全部按方切端。 */
   readonly plan?: ConnectPlan;
+  /** 内部使用：按杆件 id 提供的三角网格实体（已含斜切与钻孔）。 */
+  readonly meshes?: ReadonlyMap<string, MeshSolid>;
+  /** 内部使用：已扣除的钻孔数。 */
+  readonly holesModeled?: number;
+  /** 内部使用：布尔后实体总体积，mm^3。 */
+  readonly volumeMm3?: number;
 }
 
 export interface StepExportResult {
@@ -63,6 +75,10 @@ export interface StepExportResult {
   readonly fileName: string;
   readonly solids: number;
   readonly miteredMembers: number;
+  /** 已从实体中扣除的钻孔数；0 表示未建模钻孔。 */
+  readonly holesModeled: number;
+  /** 实体总体积，mm^3；未建模钻孔时为 null。 */
+  readonly volumeMm3: number | null;
   readonly faces: number;
   readonly points: number;
   readonly legend: readonly StepEntityRow[];
@@ -159,6 +175,10 @@ class StepWriter {
 
 function loopId(w: StepWriter, points: readonly P3[]): string {
   return w.add(`POLY_LOOP('',(${points.map((p) => w.point(p)).join(',')}))`);
+}
+
+function loopFromPointIds(w: StepWriter, ids: readonly string[]): string {
+  return w.add(`POLY_LOOP('',(${ids.join(',')}))`);
 }
 
 function oriented(loop: readonly P3[], faceNormal: P3, keepSameSense: boolean): P3[] {
@@ -294,6 +314,29 @@ function memberSolid(
   return { solidId, faceCount: faces.length };
 }
 
+/** 三角网格实体：每个三角面一个 FACE，沿用 FACETED_BREP。 */
+function triangleSolid(
+  w: StepWriter,
+  label: string,
+  mesh: MeshSolid,
+): { readonly solidId: string; readonly faceCount: number } {
+  const positions = mesh.positions;
+  const count = positions.length / 3;
+  const pointIds: string[] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    pointIds[i] = w.point([positions[i * 3]!, positions[i * 3 + 1]!, positions[i * 3 + 2]!]);
+  }
+  const faces: string[] = [];
+  for (let i = 0; i < mesh.tris.length; i += 3) {
+    const loop = loopFromPointIds(w, [pointIds[mesh.tris[i]!]!, pointIds[mesh.tris[i + 1]!]!, pointIds[mesh.tris[i + 2]!]!]);
+    const bound = w.add(`FACE_OUTER_BOUND('',${loop},.T.)`);
+    faces.push(w.add(`FACE('',(${bound}))`));
+  }
+  const shell = w.add(`CLOSED_SHELL('',(${faces.join(',')}))`);
+  const solidId = w.add(`FACETED_BREP(${stepString(label)},${shell})`);
+  return { solidId, faceCount: faces.length };
+}
+
 function header(fileName: string, title: string, timestamp: string): string {
   return [
     'ISO-10303-21;',
@@ -365,17 +408,21 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
     const label = `M${index + 1}`;
     w.resetPoints();
     const dir = member.end[member.axis] >= member.start[member.axis] ? 1 : -1;
-    const solid = memberSolid(
-      w,
-      label,
-      profile.spec,
-      member.axis,
-      [member.start.x, member.start.y, member.start.z],
-      dir,
-      member.trimStart,
-      member.cutLength,
-      miterByMember.get(member.id) ?? {},
-    );
+    const mesh = options.meshes?.get(member.id);
+    const solid =
+      mesh !== undefined
+        ? triangleSolid(w, label, mesh)
+        : memberSolid(
+            w,
+            label,
+            profile.spec,
+            member.axis,
+            [member.start.x, member.start.y, member.start.z],
+            dir,
+            member.trimStart,
+            member.cutLength,
+            miterByMember.get(member.id) ?? {},
+          );
     if (miterByMember.has(member.id)) miteredMembers += 1;
     solids.push(solid.solidId);
     faces += solid.faceCount;
@@ -407,6 +454,8 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
     fileName,
     solids: model.members.length,
     miteredMembers,
+    holesModeled: options.holesModeled ?? 0,
+    volumeMm3: options.volumeMm3 ?? null,
     faces,
     points: w.pointCount,
     legend,

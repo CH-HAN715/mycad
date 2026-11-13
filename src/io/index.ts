@@ -5,3 +5,4 @@ export type { MemberDrawingOptions, MemberDrawingResult } from './memberDxf.ts';
 export * from './memberPdf.ts';
 export * from './pdf.ts';
 export * from './step.ts';
+export * from './stepHoles.ts';

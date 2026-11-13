@@ -161,7 +161,7 @@ const LAYER_GDT = 'GDT';
 const DEFAULT_GAP = 34;
 
 /** 孔在杆件轴上的位置：start 端从 0 起算，end 端从 cutLength 倒推。 */
-function alongBarMm(hole: ConnectorHole, cutLength: number): number | null {
+export function alongBarMm(hole: ConnectorHole, cutLength: number): number | null {
   if (hole.at === 'interior') return hole.alongStartMm;
   if (hole.fromJointEndMm === null) return null;
   return hole.at === 'start' ? hole.fromJointEndMm : cutLength - hole.fromJointEndMm;

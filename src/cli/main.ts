@@ -26,6 +26,7 @@ import { DXF_PROVENANCE, sectionToDxf } from '../io/dxf.ts';
 import { MEMBER_DXF_PROVENANCE, memberDrawingsToDxf } from '../io/memberDxf.ts';
 import { MEMBER_PDF_PROVENANCE, memberDrawingsToPdf } from '../io/memberPdf.ts';
 import { STEP_PROVENANCE, frameToStep } from '../io/step.ts';
+import { STEP_HOLES_PROVENANCE, frameToStepWithHoles } from '../io/stepHoles.ts';
 import type { FrameInput, FrameModel } from '../frame/model.ts';
 import { FRAME_PROVENANCE, FrameInputError, buildFrame, parseFrameInput } from '../frame/model.ts';
 import type { Bom } from '../production/bom.ts';
@@ -118,10 +119,11 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
       基准为 start 端物理端面；孔位来自连接规则引擎。
       --json 同时返回 legend（M1/M1-H1 到杆件原名的映射，图内不写中文）。
 
-  mycad step [--json] --out <path.step> [--file <path|->]
+  mycad step [--json] [--holes] --out <path.step> [--file <path|->]
       输出框架 STEP（AP214，单位 mm）：每根杆按截面外轮廓与中心孔拉伸成实体。
       输入同 connect，可带 {"options":{"cornerStrategy":"miter45"}} 生成 45° 斜切端。
-      钻孔不扣除；非 ASCII 杆件名统一记为 M1..Mn。
+      --holes 用 manifold-3d 布尔扣除钻孔（仅通孔；按 clearanceDrill 直径）。
+      非 ASCII 杆件名统一记为 M1..Mn。
 
   mycad serve [--port <n>] [--open]
       启动本地网页设计台（只监听 127.0.0.1，默认端口 8617）。--open 自动打开浏览器。
@@ -152,6 +154,7 @@ interface Flags {
   readonly out: string | null;
   readonly stock: number | null;
   readonly kerf: number | null;
+  readonly holes: boolean;
 }
 
 interface FlagOptions {
@@ -159,6 +162,8 @@ interface FlagOptions {
   readonly allowOut?: boolean;
   /** 只有 bom/cut 接受 --stock/--kerf。 */
   readonly allowStockKerf?: boolean;
+  /** 只有 step 接受 --holes。 */
+  readonly allowHoles?: boolean;
 }
 
 function readNumericFlag(args: readonly string[], index: number, name: string): { value: number; next: number } {
@@ -178,6 +183,7 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
   let out: string | null = null;
   let stock: number | null = null;
   let kerf: number | null = null;
+  let holes = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -218,6 +224,13 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
       out = value;
       continue;
     }
+    if (arg === '--holes') {
+      if (options.allowHoles !== true) {
+        fail('E_USAGE', '--holes 仅适用于 step 命令', '用法：mycad step --file frame.json --out frame.step --holes');
+      }
+      holes = true;
+      continue;
+    }
     if (arg === '--stock') {
       if (options.allowStockKerf !== true) {
         fail('E_USAGE', '--stock 仅适用于 bom/cut 命令', '用法：mycad cut --file <path> --stock 6000 --kerf 3');
@@ -243,7 +256,7 @@ function parseFlags(args: readonly string[], options: FlagOptions = {}): Flags {
   if (sources.length > 1) {
     fail('E_USAGE', '--file、--preset、--profile、--preset-profile 只能选一个', '四选一：读几何 JSON、跑内置算例、读型材规格、或用内置型材预设');
   }
-  return { json, file, preset, profile, presetProfile, out, stock, kerf };
+  return { json, file, preset, profile, presetProfile, out, stock, kerf, holes };
 }
 
 function readInput(file: string | null): string {
@@ -1025,8 +1038,8 @@ function cmdDrawing(args: readonly string[]): number {
   return EXIT.ok;
 }
 
-function cmdStep(args: readonly string[]): number {
-  const flags = parseFlags(args, { allowOut: true });
+async function cmdStep(args: readonly string[]): Promise<number> {
+  const flags = parseFlags(args, { allowOut: true, allowHoles: true });
   if (flags.out === null) {
     fail('E_USAGE', '缺少 --out', '用法：mycad step --file frame.json --out frame.step');
   }
@@ -1038,7 +1051,10 @@ function cmdStep(args: readonly string[]): number {
   const { frame, options } = parseConnectInput(raw);
   const model = buildFrame(frame);
   const plan = planConnections(model, options);
-  const result = frameToStep(model, { fileName: basename(flags.out), plan });
+  const result = flags.holes
+    ? await frameToStepWithHoles(model, plan, { fileName: basename(flags.out) })
+    : frameToStep(model, { fileName: basename(flags.out), plan });
+  const provenance = flags.holes ? STEP_HOLES_PROVENANCE : STEP_PROVENANCE;
   writeTextFile(flags.out, result.text);
 
   if (flags.json) {
@@ -1050,30 +1066,33 @@ function cmdStep(args: readonly string[]): number {
           version: readVersion(),
           out: flags.out,
           bytes: result.text.length,
-          format: STEP_PROVENANCE.format,
+          format: provenance.format,
           units: 'mm',
           solids: result.solids,
           miteredMembers: result.miteredMembers,
+          holesModeled: result.holesModeled,
+          volumeMm3: result.volumeMm3,
           faces: result.faces,
           points: result.points,
           legend: result.legend,
           warnings: result.warnings,
-          provenance: STEP_PROVENANCE,
+          provenance,
         },
         null,
         2,
       ),
     );
   } else {
+    const volume = result.volumeMm3 === null ? '' : `，体积 ${result.volumeMm3.toFixed(1)} mm^3`;
     console.log(
-      `已写入 STEP：${flags.out}（${result.solids} 个实体，其中 ${result.miteredMembers} 根含斜切端，${result.faces} 个面，${result.points} 个点）`,
+      `已写入 STEP：${flags.out}（${result.solids} 个实体，其中 ${result.miteredMembers} 根含斜切端，扣除 ${result.holesModeled} 个钻孔${volume}，${result.faces} 个面）`,
     );
     for (const warning of result.warnings) console.log(`警告：${warning}`);
-    console.log(`单位：${STEP_PROVENANCE.units}`);
-    console.log(`几何：${STEP_PROVENANCE.geometry}`);
-    for (const item of STEP_PROVENANCE.assumptions) console.log(`假设：${item}`);
-    for (const item of STEP_PROVENANCE.limitations) console.log(`局限：${item}`);
-    console.log(`边界：${STEP_PROVENANCE.disclaimer}`);
+    console.log(`单位：${provenance.units}`);
+    console.log(`几何：${provenance.geometry}`);
+    for (const item of provenance.assumptions) console.log(`假设：${item}`);
+    for (const item of provenance.limitations) console.log(`局限：${item}`);
+    console.log(`边界：${provenance.disclaimer}`);
   }
   return EXIT.ok;
 }
@@ -1285,7 +1304,7 @@ function cmdBench(args: readonly string[]): number {
   return failed === 0 ? EXIT.ok : EXIT.verifyFailed;
 }
 
-function run(argv: readonly string[]): number {
+async function run(argv: readonly string[]): Promise<number> {
   if (argv.length === 0) {
     console.log(USAGE);
     return EXIT.ok;
@@ -1323,7 +1342,7 @@ function run(argv: readonly string[]): number {
     case 'drawing':
       return cmdDrawing(rest);
     case 'step':
-      return cmdStep(rest);
+      return await cmdStep(rest);
     case 'help':
       console.log(USAGE);
       return EXIT.ok;
@@ -1383,10 +1402,10 @@ function describeError(error: unknown): ErrorInfo {
   };
 }
 
-process.exitCode = ((): number => {
+process.exitCode = await (async (): Promise<number> => {
   const argv = process.argv.slice(2);
   try {
-    return run(argv);
+    return await run(argv);
   } catch (error) {
     const info = describeError(error);
     if (argv.includes('--json')) {
