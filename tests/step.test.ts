@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildFrame, parseFrameInput } from '../src/frame/model.ts';
+import { planConnections } from '../src/connect/plan.ts';
 import { STEP_PROVENANCE, frameToStep } from '../src/io/step.ts';
 
 const CLI = fileURLToPath(new URL('../src/cli/main.ts', import.meta.url));
@@ -21,6 +22,26 @@ function frameOf(members: unknown[]): ReturnType<typeof buildFrame> {
 }
 
 const beam = (id: string, length: number) => ({ id, profileId: 'p20', start: [0, 0, 0], end: [length, 0, 0] });
+
+/** 收集指定实体（M1..Mn）闭包内的点坐标，避免不同杆件的包围盒互相干扰。 */
+function solidPoints(text: string, label: string): number[][] {
+  const entities = new Map<string, string>();
+  for (const m of text.matchAll(/^(#\d+)=(.+);$/gm)) entities.set(m[1]!, m[2]!);
+  const solid = [...entities.entries()].find(([, body]) => body.startsWith(`FACETED_BREP('${label}',`))!;
+  const root = /,(#\d+)\)$/.exec(solid[1]!)![1]!;
+  const seen = new Set<string>();
+  const queue = [root];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const ref of entities.get(id)?.matchAll(/#\d+/g) ?? []) queue.push(ref[0]);
+  }
+  return [...seen]
+    .map((id) => /^CARTESIAN_POINT\('',\(([^)]*)\)\)$/.exec(entities.get(id) ?? ''))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => m[1]!.split(',').map(Number));
+}
 
 /** 收集所有 CARTESIAN_POINT 的坐标。 */
 function points(text: string): number[][] {
@@ -129,6 +150,30 @@ describe('mycad STEP 结构', () => {
     }
     const bad = [...edges.entries()].filter(([, count]) => count !== 2);
     assert.deepEqual(bad, [], '每条边必须被两个面共享');
+
+    const miterModel = buildFrame(
+      parseFrameInput({
+        profiles: [{ id: 'p40', spec: { width: 40, height: 40 } }],
+        members: [
+          { id: 'A', profileId: 'p40', start: [0, 0, 0], end: [600, 0, 0] },
+          { id: 'B', profileId: 'p40', start: [0, 0, 0], end: [0, 0, 750] },
+        ],
+      }),
+    );
+    const mitered = frameToStep(miterModel, { plan: planConnections(miterModel, { cornerStrategy: 'miter45' }) });
+    const miterLoops = [...mitered.text.matchAll(/POLY_LOOP\('',\(([^)]*)\)\)/g)].map((m) =>
+      m[1]!.split(',').map((id) => id.trim()),
+    );
+    const miterEdges = new Map<string, number>();
+    for (const loop of miterLoops) {
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i]!;
+        const b = loop[(i + 1) % loop.length]!;
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+        miterEdges.set(key, (miterEdges.get(key) ?? 0) + 1);
+      }
+    }
+    assert.deepEqual([...miterEdges.entries()].filter(([, count]) => count !== 2), [], '斜切壳体同样闭合');
   });
 
   it('中心孔作为内环进入两端面，并生成孔壁侧面', () => {    const model = buildFrame(
@@ -153,6 +198,41 @@ describe('mycad STEP 结构', () => {
   });
 });
 
+describe('mycad STEP 45° 斜切端', () => {
+  const L40 = { id: 'p40', spec: { width: 40, height: 40 }, material: { name: '6063-T5', densityKgPerM3: 2700 } };
+  const cornerFrame = () =>
+    buildFrame(
+      parseFrameInput({
+        profiles: [L40],
+        members: [
+          { id: 'A', profileId: 'p40', start: [0, 0, 0], end: [600, 0, 0] },
+          { id: 'B', profileId: 'p40', start: [0, 0, 0], end: [0, 0, 750] },
+        ],
+      }),
+    );
+
+  it('斜切端按剪切平面建模：长点在 -u/-v 侧，实体伸出中心线半宽', () => {
+    const model = cornerFrame();
+    const plan = planConnections(model, { cornerStrategy: 'miter45' });
+    const out = frameToStep(model, { plan, date: '2026-11-13' });
+    assert.equal(out.miteredMembers, 2);
+    const a = solidPoints(out.text, 'M1');
+    assert.equal(Math.min(...a.map((p) => p[0]!)), -20, 'A 的长点伸出到 x=-20');
+    assert.equal(Math.max(...a.map((p) => p[0]!)), 600, 'A 的方切端仍在 x=600');
+    const b = solidPoints(out.text, 'M2');
+    assert.equal(Math.min(...b.map((p) => p[2]!)), -20, 'B 的长点伸出到 z=-20');
+    assert.equal(Math.max(...b.map((p) => p[2]!)), 750);
+  });
+
+  it('不给 plan 时按方切端，端面停在中心线端点上', () => {
+    const out = frameToStep(cornerFrame());
+    assert.equal(out.miteredMembers, 0);
+    const a = solidPoints(out.text, 'M1');
+    assert.equal(Math.min(...a.map((p) => p[0]!)), 0);
+    assert.equal(Math.max(...a.map((p) => p[0]!)), 600);
+  });
+});
+
 describe('mycad CLI step', () => {
   it('写文件并返回 JSON 统计', () => {
     const dir = mkdtempSync(join(tmpdir(), 'mycad-step-'));
@@ -161,8 +241,11 @@ describe('mycad CLI step', () => {
     writeFileSync(
       input,
       JSON.stringify({
-        profiles: [P20],
-        members: [beam('A', 600), { id: 'B', profileId: 'p20', start: [0, 0, 0], end: [0, 0, 750] }],
+        frame: {
+          profiles: [P20],
+          members: [beam('A', 600), { id: 'B', profileId: 'p20', start: [0, 0, 0], end: [0, 0, 750] }],
+        },
+        options: { cornerStrategy: 'miter45' },
       }),
       'utf8',
     );
@@ -176,12 +259,14 @@ describe('mycad CLI step', () => {
       ok: boolean;
       command: string;
       solids: number;
+      miteredMembers: number;
       faces: number;
       provenance: { format: string };
     };
     assert.equal(payload.ok, true);
     assert.equal(payload.command, 'step');
     assert.equal(payload.solids, 2);
+    assert.equal(payload.miteredMembers, 2);
     assert.equal(payload.faces, 12);
     assert.match(payload.provenance.format, /FACETED_BREP/);
     const text = readFileSync(output, 'utf8');

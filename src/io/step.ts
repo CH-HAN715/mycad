@@ -2,12 +2,13 @@ import type { Axis, FrameModel } from '../frame/model.ts';
 import { buildProfile } from '../geom/profile.ts';
 import type { ProfileSpec } from '../geom/profile.ts';
 import type { Vec2 } from '../geom/polygon.ts';
+import type { ConnectPlan, MiterCut } from '../connect/plan.ts';
 
 /**
  * L7 输出层：框架 STEP（ISO 10303-21）导出。
  *
- * 几何口径：每根杆件按参数化截面的外轮廓与中心孔拉伸成直棱柱，
- * 端面按方切处理（斜切、钻孔、端盖不在本版实体里扣除）。
+ * 几何口径：每根杆件按参数化截面的外轮廓与中心孔拉伸成棱柱；
+ * 45° 斜切端按剪切平面建模，钻孔、端盖与倒角不在本版实体里。
  * 只用 PLANE + POLY_LOOP 的平面 B-rep，不依赖任何 CAD 内核。
  */
 
@@ -15,24 +16,26 @@ export const STEP_PROVENANCE = {
   format: 'ISO 10303-21 (STEP), AP214 AUTOMOTIVE_DESIGN, FACETED_BREP',
   units: 'mm（SI_UNIT(.MILLI.,.METRE.)）',
   geometry:
-    '每根杆件按型材参数化截面的外轮廓与中心孔（正多边形）拉伸成直棱柱；实心体沿杆件轴线放置，起点取扣除 trimStart 后的物理端面',
+    '每根杆件按型材参数化截面的外轮廓与中心孔（正多边形）拉伸成棱柱；斜切端由平面剪切形成；实心体沿杆件轴线放置，起点取扣除 trimStart 后的物理端面',
   sectionFrame:
     '截面局部 u/v 映射与连接层一致：x 轴杆件 u=y,v=z；y 轴杆件 u=x,v=z；z 轴杆件 u=x,v=y；局部原点在截面形心',
   assumptions: [
-    '长度取 cutLength（中心线口径），不取斜切展开后的 stockLength',
-    '斜切端按方切端近似，端盖与倒角不在实体里',
-    '钻孔不从未知实体中扣除；孔位与孔径见 drawing 输出',
+    '长度取 cutLength（中心线口径）；斜切端在长点侧额外伸出半宽，整体下料长等于 cutLength 加斜切余量',
+    '45° 斜切按剪切平面建模，长点固定在 −u/−v 侧（与二维图一致）；装配方向相反时须镜像确认',
+    '端盖与倒角不在实体里',
+    '钻孔不从实体中扣除；孔位与孔径见 drawing 输出',
     '中心孔按参数化正多边形拉伸，圆弧以折线近似（弦高由 profile 的 sagitta 控制）',
     '杆件几何在关节处按中心线首尾相接，不扣除连接件让量',
   ],
   limitations: [
-    '不是可直接下料的实体验证模型：没有钻孔、斜切、端盖与连接件',
+    '不是可直接下料的实体验证模型：没有钻孔、端盖与连接件',
+    '斜切只支持连接引擎给出的 45° 等截面平面剪切；非 45° 或变截面斜切不建模',
     '外轮廓不建模圆角、倒角与非对称槽位（与 PROFILE_PROVENANCE 同源）',
     '文件未用第三方 CAD 内核回读验证；结构自检见 tests/step.test.ts',
     '非 ASCII 杆件名不写入 STEP，实体名统一用 M1..Mn，原名见返回 legend',
   ],
   disclaimer:
-    '本文件用于三维布局与干涉参考，不是可签收的制造模型；投产前须补钻孔、斜切与其余工艺特征，并由工程师确认。',
+    '本文件用于三维布局与干涉参考，不是可签收的制造模型；投产前须补钻孔与其余工艺特征，并由工程师确认。',
 } as const;
 
 type P3 = readonly [number, number, number];
@@ -51,12 +54,15 @@ export interface StepExportOptions {
   readonly title?: string;
   /** 时间戳日期 YYYY-MM-DD；默认当天。 */
   readonly date?: string;
+  /** 连接方案：提供时按其中的 45° 斜切修改端面；不给则全部按方切端。 */
+  readonly plan?: ConnectPlan;
 }
 
 export interface StepExportResult {
   readonly text: string;
   readonly fileName: string;
   readonly solids: number;
+  readonly miteredMembers: number;
   readonly faces: number;
   readonly points: number;
   readonly legend: readonly StepEntityRow[];
@@ -112,6 +118,7 @@ function asciiTitle(value: string): string {
 class StepWriter {
   private readonly entities: string[] = [];
   private readonly pointCache = new Map<string, string>();
+  private pointCountTotal = 0;
   private nextId = 0;
 
   add(body: string): string {
@@ -139,8 +146,15 @@ class StepWriter {
   }
 
   get pointCount(): number {
-    return this.pointCache.size;
+    return this.pointCountTotal;
   }
+
+  /** 每个实体独立的点缓存：不同杆件坐标重合时不能被合并成一个拓扑点。 */
+  resetPoints(): void {
+    this.pointCountTotal += this.pointCache.size;
+    this.pointCache.clear();
+  }
+
 }
 
 function loopId(w: StepWriter, points: readonly P3[]): string {
@@ -221,6 +235,7 @@ function memberSolid(
   dir: number,
   trimStart: number,
   cutLength: number,
+  miters: { readonly start?: MiterCut; readonly end?: MiterCut } = {},
 ): { readonly solidId: string; readonly faceCount: number } {
   const profile = buildProfile(spec);
   const base: P3 = [
@@ -230,10 +245,30 @@ function memberSolid(
   ];
   const axisDirection = vscale(UNIT[axis], dir);
 
-  const capOuter0 = profile.outer.map((p) => toWorld(p, axis, base, dir, 0));
-  const capOuter1 = profile.outer.map((p) => toWorld(p, axis, base, dir, cutLength));
-  const capsHoles0 = profile.holes.map((hole) => hole.map((p) => toWorld(p, axis, base, dir, 0)));
-  const capsHoles1 = profile.holes.map((hole) => hole.map((p) => toWorld(p, axis, base, dir, cutLength)));
+  /**
+   * 45° 斜切是沿截面一条轴的线性剪切：端点坐标 = 中心线端 ± 半宽。
+   * 长点固定在 −u/−v 侧，与二维图的斜切线方向一致。
+   */
+  const shear = (cut: MiterCut | undefined): { readonly coord: 'u' | 'v'; readonly slope: number } | null => {
+    if (cut === undefined) return null;
+    const half = (cut.longPointMm - cut.shortPointMm) / 2;
+    const coord = cut.view === 'top' ? 'u' : 'v';
+    const halfDim = (coord === 'u' ? spec.width : spec.height) / 2;
+    return halfDim > 0 ? { coord, slope: half / halfDim } : null;
+  };
+  const startShear = shear(miters.start);
+  const endShear = shear(miters.end);
+  const tAt = (p: Vec2, end: boolean): number => {
+    const s = end ? endShear : startShear;
+    if (s === null) return end ? cutLength : 0;
+    const c = s.coord === 'u' ? p.x : p.y;
+    // 起点端 t = c·slope；终点端整体平移 cutLength 且斜率反向（长点向外伸出）。
+    return end ? cutLength - c * s.slope : c * s.slope;
+  };
+  const capOuter0 = profile.outer.map((p) => toWorld(p, axis, base, dir, tAt(p, false)));
+  const capOuter1 = profile.outer.map((p) => toWorld(p, axis, base, dir, tAt(p, true)));
+  const capsHoles0 = profile.holes.map((hole) => hole.map((p) => toWorld(p, axis, base, dir, tAt(p, false))));
+  const capsHoles1 = profile.holes.map((hole) => hole.map((p) => toWorld(p, axis, base, dir, tAt(p, true))));
 
   const faces: string[] = [];
   faces.push(addCapFace(w, capOuter0, capsHoles0, vscale(axisDirection, -1)));
@@ -311,6 +346,15 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
   const solids: string[] = [];
   let faces = 0;
   const warnings: string[] = [];
+  const miterByMember = new Map<string, { start?: MiterCut; end?: MiterCut }>();
+  for (const joint of options.plan?.joints ?? []) {
+    for (const cut of joint.miters ?? []) {
+      const bucket = miterByMember.get(cut.memberId) ?? {};
+      bucket[cut.end] = cut;
+      miterByMember.set(cut.memberId, bucket);
+    }
+  }
+  let miteredMembers = 0;
 
   let nonAsciiNames = 0;
   model.members.forEach((member, index) => {
@@ -319,6 +363,7 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
       throw new RangeError(`杆件 ${member.id} 引用了不存在的型材 ${member.profileId}`);
     }
     const label = `M${index + 1}`;
+    w.resetPoints();
     const dir = member.end[member.axis] >= member.start[member.axis] ? 1 : -1;
     const solid = memberSolid(
       w,
@@ -329,9 +374,12 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
       dir,
       member.trimStart,
       member.cutLength,
+      miterByMember.get(member.id) ?? {},
     );
+    if (miterByMember.has(member.id)) miteredMembers += 1;
     solids.push(solid.solidId);
     faces += solid.faceCount;
+    w.resetPoints();
     legend.push({
       label,
       memberId: member.id,
@@ -358,6 +406,7 @@ export function frameToStep(model: FrameModel, options: StepExportOptions = {}):
     text,
     fileName,
     solids: model.members.length,
+    miteredMembers,
     faces,
     points: w.pointCount,
     legend,

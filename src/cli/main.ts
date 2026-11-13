@@ -120,7 +120,8 @@ const USAGE = `mycad —— 铝型材框架设计引擎（当前实现：L1 截�
 
   mycad step [--json] --out <path.step> [--file <path|->]
       输出框架 STEP（AP214，单位 mm）：每根杆按截面外轮廓与中心孔拉伸成实体。
-      斜切按方切近似，钻孔不扣除；非 ASCII 杆件名统一记为 M1..Mn。
+      输入同 connect，可带 {"options":{"cornerStrategy":"miter45"}} 生成 45° 斜切端。
+      钻孔不扣除；非 ASCII 杆件名统一记为 M1..Mn。
 
   mycad serve [--port <n>] [--open]
       启动本地网页设计台（只监听 127.0.0.1，默认端口 8617）。--open 自动打开浏览器。
@@ -953,6 +954,7 @@ function cmdDrawing(args: readonly string[]): number {
             endSquarenessMm: pdf.endSquarenessMm,
             endFlatnessMm: pdf.endFlatnessMm,
             holeCylindricityMm: pdf.holeCylindricityMm,
+            holeAxisPerpMm: pdf.holeAxisPerpMm,
             surfaceRoughnessRaUm: pdf.surfaceRoughnessRaUm,
             positionZoneMm: pdf.positionZoneMm,
             stats: pdf.stats,
@@ -995,6 +997,7 @@ function cmdDrawing(args: readonly string[]): number {
           endSquarenessMm: drawing.endSquarenessMm,
           endFlatnessMm: drawing.endFlatnessMm,
           holeCylindricityMm: drawing.holeCylindricityMm,
+          holeAxisPerpMm: drawing.holeAxisPerpMm,
           surfaceRoughnessRaUm: drawing.surfaceRoughnessRaUm,
           positionZoneMm: drawing.positionZoneMm,
           stats: drawing.stats,
@@ -1027,8 +1030,15 @@ function cmdStep(args: readonly string[]): number {
   if (flags.out === null) {
     fail('E_USAGE', '缺少 --out', '用法：mycad step --file frame.json --out frame.step');
   }
-  const model = buildFrame(frameInputFromFlags(flags, 'step'));
-  const result = frameToStep(model, { fileName: basename(flags.out) });
+  assertNoPresetOrProfile(flags, 'step');
+  const raw = parseJsonText(
+    readInput(flags.file),
+    'step 输入形如 {"frame":{...}} 或 {"frame":{...},"options":{"cornerStrategy":"miter45"}}',
+  );
+  const { frame, options } = parseConnectInput(raw);
+  const model = buildFrame(frame);
+  const plan = planConnections(model, options);
+  const result = frameToStep(model, { fileName: basename(flags.out), plan });
   writeTextFile(flags.out, result.text);
 
   if (flags.json) {
@@ -1043,6 +1053,7 @@ function cmdStep(args: readonly string[]): number {
           format: STEP_PROVENANCE.format,
           units: 'mm',
           solids: result.solids,
+          miteredMembers: result.miteredMembers,
           faces: result.faces,
           points: result.points,
           legend: result.legend,
@@ -1054,7 +1065,9 @@ function cmdStep(args: readonly string[]): number {
       ),
     );
   } else {
-    console.log(`已写入 STEP：${flags.out}（${result.solids} 个实体，${result.faces} 个面，${result.points} 个点）`);
+    console.log(
+      `已写入 STEP：${flags.out}（${result.solids} 个实体，其中 ${result.miteredMembers} 根含斜切端，${result.faces} 个面，${result.points} 个点）`,
+    );
     for (const warning of result.warnings) console.log(`警告：${warning}`);
     console.log(`单位：${STEP_PROVENANCE.units}`);
     console.log(`几何：${STEP_PROVENANCE.geometry}`);
