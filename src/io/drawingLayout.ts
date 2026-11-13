@@ -130,6 +130,8 @@ export interface LayoutResult {
   readonly endFlatnessMm: number;
   /** 孔壁圆柱度，mm。 */
   readonly holeCylindricityMm: number;
+  /** 孔轴线对基准 B 的垂直度，mm。 */
+  readonly holeAxisPerpMm: number;
   /** 加工面表面粗糙度 Ra，um。 */
   readonly surfaceRoughnessRaUm: number;
   readonly blocks: readonly LayoutBlock[];
@@ -368,10 +370,11 @@ export function layoutMemberDrawings(
     const squarenessMm = rules.tolEndSquarenessMm;
     const flatnessMm = rules.tolEndFlatnessMm;
     const cylindricityMm = rules.tolHoleCylindricityMm;
+    const axisPerpMm = rules.tolHoleAxisPerpMm;
     text(
       hasSquareEnd
-        ? 'GD&T (L TO R): END PERPENDICULARITY | END FLATNESS | HOLE CYLINDRICITY'
-        : 'GD&T (L TO R): END FLATNESS | HOLE CYLINDRICITY (PERPENDICULARITY N/A)',
+        ? 'GD&T (L TO R): END PERP | END FLATNESS | HOLE CYLINDRICITY | HOLE-AXIS PERP'
+        : 'GD&T (L TO R): END FLATNESS | HOLE CYLINDRICITY | HOLE-AXIS PERP (END PERP N/A)',
       0,
       down,
       t.textH,
@@ -408,6 +411,15 @@ export function layoutMemberDrawings(
     hLine(frameX + 2.5, frameX + 7.5, formTop + 1.5, LAYER_GDT);
     hLine(frameX + 2.5, frameX + 7.5, formTop + 5.5, LAYER_GDT);
     text(cylindricityMm.toFixed(2), frameX + 11.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+    frameX += 42;
+    // 孔轴线对基准 B 的垂直度：符号格 + 公差格 + 基准 B。
+    box(frameX, formTop, 28, 7, LAYER_GDT);
+    vLine(frameX + 8, formTop, formTop + 7, LAYER_GDT);
+    vLine(frameX + 20, formTop, formTop + 7, LAYER_GDT);
+    hLine(frameX + 2, frameX + 6, formTop + 5.5, LAYER_GDT);
+    vLine(frameX + 4, formTop + 1.5, formTop + 5.5, LAYER_GDT);
+    text(axisPerpMm.toFixed(2), frameX + 9.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
+    text('B', frameX + 21.5, formTop + 4, t.textH - 0.6, LAYER_DIM);
     down = formTop + 7 + t.textH + 1.2;
     text(
       hasSquareEnd
@@ -422,6 +434,8 @@ export function layoutMemberDrawings(
     text(`NOTE 5: END FACE FLATNESS ${flatnessMm.toFixed(2)} (NO DATUM); HOLE WALL CYLINDRICITY ${cylindricityMm.toFixed(2)} (NO DATUM; ENGINEERING PRACTICE, NOT A STANDARD CLAUSE)`, 0, down, t.textH, LAYER_DIM);
     down += t.rowStep;
     text(`NOTE 6: EXTRUSION STRAIGHTNESS AND AS-EXTRUDED SURFACE ARE SUPPLIER'S, NOT COVERED BY THIS DRAWING`, 0, down, t.textH, LAYER_DIM);
+    down += t.rowStep;
+    text(`NOTE 7: HOLE AXES PERPENDICULAR TO DATUM B WITHIN ${axisPerpMm.toFixed(2)} (ENGINEERING PRACTICE); COAXIALITY N/A FOR INDEPENDENT CLEARANCE HOLES`, 0, down, t.textH, LAYER_DIM);
     down += t.rowStep;
 
     // 表面粗糙度：ISO 1302 风格勾形符号（线段拼，非标准符号实体），数值在右侧。
@@ -543,6 +557,7 @@ export function layoutMemberDrawings(
     endSquarenessMm: rules.tolEndSquarenessMm,
     endFlatnessMm: rules.tolEndFlatnessMm,
     holeCylindricityMm: rules.tolHoleCylindricityMm,
+    holeAxisPerpMm: rules.tolHoleAxisPerpMm,
     surfaceRoughnessRaUm: rules.surfaceRoughnessRaUm,
     positionZoneMm: 2 * rules.tolHolePositionMm,
     blocks,

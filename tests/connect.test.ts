@@ -69,11 +69,13 @@ describe('L3 规则表', () => {
   });
 
   it('平面度与圆柱度可覆盖，非正数拒绝', () => {
-    const merged = parseRulesOverride({ tolEndFlatnessMm: 0.05, tolHoleCylindricityMm: 0.02 });
+    const merged = parseRulesOverride({ tolEndFlatnessMm: 0.05, tolHoleCylindricityMm: 0.02, tolHoleAxisPerpMm: 0.1 });
     assert.equal(merged.tolEndFlatnessMm, 0.05);
     assert.equal(merged.tolHoleCylindricityMm, 0.02);
+    assert.equal(merged.tolHoleAxisPerpMm, 0.1);
     assert.throws(() => parseRulesOverride({ tolEndFlatnessMm: 0 }), /正的有限数/);
     assert.throws(() => parseRulesOverride({ tolHoleCylindricityMm: -0.05 }), /正的有限数/);
+    assert.throws(() => parseRulesOverride({ tolHoleAxisPerpMm: 0 }), /正的有限数/);
   });
 });
 
