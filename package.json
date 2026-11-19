@@ -43,6 +43,6 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "manifold-3d": "3.5.4"
+    "manifold-3d": "3.5.5"
   }
 }
